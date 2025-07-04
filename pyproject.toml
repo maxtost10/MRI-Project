@@ -1,0 +1,8 @@
+[tool.ruff]
+line-length = 88  # oder z.B. 100, je nach Vorliebe
+target-version = "py39"  # Deine Python-Version
+select = ["E", "F", "I"]  # E: Pycodestyle, F: Pyflakes, I: Import Sorting (isort)
+ignore = []  # Ignorieren kannst du später noch anpassen
+
+[tool.ruff.isort]
+known-first-party = ["your_package_name"]  # optional, dein Package-Name für Importsortierung
