@@ -1,0 +1,6 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.0  # use the latest compatible version from: https://github.com/astral-sh/ruff-pre-commit/releases
+    hooks:
+      - id: ruff
+        args: [--fix]  # optional: auto-fix on commit
