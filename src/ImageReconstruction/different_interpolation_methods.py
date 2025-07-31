@@ -163,7 +163,6 @@ def spline_interpolation_kspace(kspace_undersampled, mask, order=3):
 
 def low_pass_filter_recon(kspace_undersampled, mask, sigma=1.0):
     """Reconstruction with low-pass filter"""
-    # Zero-filling
     image = from_kspace(kspace_undersampled)
     
     # Gaussian low-pass filter
@@ -172,45 +171,47 @@ def low_pass_filter_recon(kspace_undersampled, mask, sigma=1.0):
     return filtered
 
 
-# %%
-plt.rcParams['figure.figsize'] = (15, 10)
-plt.rcParams['font.size'] = 12
-
-size = 256
-acceleration = 4
-patterns = ['random', 'regular']
-phantom_types = ['shepp_logan', 'resolution']
-
-results = {}
-# %%
-for phantom_type in phantom_types:
-    phantom = create_phantom(size, phantom_type)
-    kspace_full = to_kspace(phantom)
+def analyze_frequency_response(phantom, recons):
+    """Analyze frequency response of different methods"""
+    _, axes = plt.subplots(2, len(recons) + 1, figsize=(20, 8))
     
-    for pattern in patterns:
-        # Create undersampling mask
-        mask = create_undersampling_mask(kspace_full.shape, 
-                                        pattern=pattern, 
-                                        acceleration=acceleration)
-        kspace_undersampled = kspace_full * mask
+    # Original k-space
+    kspace_original = to_kspace(phantom)
+    kspace_magnitude = np.log(np.abs(kspace_original) + 1e-8)
+    
+    axes[0, 0].imshow(kspace_magnitude, cmap='gray')
+    axes[0, 0].set_title('Original k-space\n(log magnitude)')
+    axes[0, 0].axis('off')
+    
+    # 1D profile through k-space center
+    center_profile_original = np.abs(kspace_original[size//2, :])
+    axes[1, 0].plot(center_profile_original)
+    axes[1, 0].set_title('k-space Profile (center line)')
+    axes[1, 0].set_yscale('log')
+    axes[1, 0].set_xlabel('k-space position')
+    axes[1, 0].set_ylabel('Magnitude')
+    
+    # Reconstructions
+    for idx, (method_name, recon) in enumerate(recons.items(), 1):
+        kspace_recon = to_kspace(recon)
+        kspace_mag_recon = np.log(np.abs(kspace_recon) + 1e-8)
         
-        # Various reconstructions
-        recons = {
-            'Zero-Filling': from_kspace(kspace_undersampled),
-            'Linear k-space': linear_interpolation_kspace(kspace_undersampled, mask),
-            'Spline k-space': spline_interpolation_kspace(kspace_undersampled, mask),
-            'Low-pass Filter': low_pass_filter_recon(kspace_undersampled, mask, sigma=2.0),
-        }
+        axes[0, idx].imshow(kspace_mag_recon, cmap='gray')
+        axes[0, idx].set_title(f'{method_name}\nk-space')
+        axes[0, idx].axis('off')
         
-        # Store results
-        key = f"{phantom_type}_{pattern}"
-        results[key] = {
-            'phantom': phantom,
-            'mask': mask,
-            'recons': recons
-        }
+        # Profile
+        center_profile_recon = np.abs(kspace_recon[size//2, :])
+        axes[1, idx].plot(center_profile_original, 'b-', alpha=0.5, label='Original')
+        axes[1, idx].plot(center_profile_recon, 'r-', label='Recon')
+        axes[1, idx].set_title(f'{method_name} Profile')
+        axes[1, idx].set_yscale('log')
+        axes[1, idx].set_xlabel('k-space position')
+        axes[1, idx].legend()
+    
+    plt.tight_layout()
+    plt.show()
 
-# %%
 
 def plot_reconstruction_comparison(phantom, mask, recons, title=""):
     """Compare different reconstruction methods"""
@@ -230,7 +231,6 @@ def plot_reconstruction_comparison(phantom, mask, recons, title=""):
     axes[2, 0].axis('off')
     
     # Reconstructions
-    metrics_text = []
     for idx, (method_name, recon) in enumerate(recons.items(), 1):
         # Reconstructed image
         axes[0, idx].imshow(recon, cmap='gray', vmin=0, vmax=1)
@@ -261,6 +261,45 @@ def plot_reconstruction_comparison(phantom, mask, recons, title=""):
     plt.tight_layout()
     return fig
 
+
+# %%
+plt.rcParams['figure.figsize'] = (15, 10)
+plt.rcParams['font.size'] = 12
+
+size = 256
+acceleration = 4
+patterns = ['random', 'regular']
+phantom_types = ['shepp_logan', 'resolution']
+
+results = {}
+# %%
+for phantom_type in phantom_types:
+    phantom = create_phantom(size, phantom_type)
+    kspace_full = to_kspace(phantom)
+    
+    for pattern in patterns:
+        # Create undersampling mask
+        mask = create_undersampling_mask(kspace_full.shape, 
+                                        pattern=pattern, 
+                                        acceleration=acceleration)
+        kspace_undersampled = kspace_full * mask
+        
+        # Various reconstructions
+        recons = {
+            'Inverse Fourier': from_kspace(kspace_undersampled),
+            'Linear k-space': linear_interpolation_kspace(kspace_undersampled, mask),
+            'Spline k-space': spline_interpolation_kspace(kspace_undersampled, mask),
+            'Low-pass Filter': low_pass_filter_recon(kspace_undersampled, mask, sigma=2.0),
+        }
+        
+        # Store results
+        key = f"{phantom_type}_{pattern}"
+        results[key] = {
+            'phantom': phantom,
+            'mask': mask,
+            'recons': recons
+        }
+
 # %%
 for key, data in results.items():
     fig = plot_reconstruction_comparison(
@@ -270,4 +309,8 @@ for key, data in results.items():
         title=f"Reconstruction Comparison: {key}"
     )
     plt.show()
-# %%
+
+
+# Analyze frequency response for Shepp-Logan with random sampling
+data = results['shepp_logan_random']
+analyze_frequency_response(data['phantom'], data['recons'])
