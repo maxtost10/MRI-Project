@@ -314,3 +314,42 @@ for key, data in results.items():
 # Analyze frequency response for Shepp-Logan with random sampling
 data = results['shepp_logan_random']
 analyze_frequency_response(data['phantom'], data['recons'])
+
+# %%
+import pandas as pd
+
+def create_summary_table(results):
+    """Create overview table of all metrics"""
+    summary_data = []
+    
+    for scenario, data in results.items():
+        phantom = data['phantom']
+        for method, recon in data['recons'].items():
+            psnr_val = psnr(phantom, recon, data_range=1.0)
+            ssim_val = ssim(phantom, recon, data_range=1.0)
+            rmse = np.sqrt(np.mean((phantom - recon)**2))
+            
+            summary_data.append({
+                'Scenario': scenario,
+                'Method': method,
+                'PSNR (dB)': f"{psnr_val:.2f}",
+                'SSIM': f"{ssim_val:.3f}",
+                'RMSE': f"{rmse:.4f}"
+            })
+    
+    df = pd.DataFrame(summary_data)
+    return df
+
+# Show table
+summary_df = create_summary_table(results)
+print(summary_df.to_string(index=False))
+
+# Best method per scenario
+print("\n=== Best Method per Scenario (PSNR) ===")
+for scenario in summary_df['Scenario'].unique():
+    scenario_data = summary_df[summary_df['Scenario'] == scenario]
+    # Convert PSNR back to float for comparison
+    scenario_data['PSNR_val'] = scenario_data['PSNR (dB)'].astype(float)
+    best = scenario_data.loc[scenario_data['PSNR_val'].idxmax()]
+    print(f"{scenario}: {best['Method']} (PSNR: {best['PSNR (dB)']} dB)")
+# %%
