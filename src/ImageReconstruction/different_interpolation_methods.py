@@ -353,3 +353,14 @@ for scenario in summary_df['Scenario'].unique():
     best = scenario_data.loc[scenario_data['PSNR_val'].idxmax()]
     print(f"{scenario}: {best['Method']} (PSNR: {best['PSNR (dB)']} dB)")
 # %%
+
+### Practical Tips:
+# 1. **Sampling pattern matters!** Random sampling often works better than regular
+# 2. **Center of k-space** should always be well sampled (low frequencies)
+# 3. **Combine methods**: e.g., k-space interpolation first, then image domain filtering
+# 4. **Iterative methods** (like POCS) can yield better results
+
+### Next Steps:
+# - Compressed Sensing with L1 regularization
+# - Parallel imaging (SENSE/GRAPPA) when multi-coil data available
+# - First neural networks for post-processing
