@@ -161,35 +161,6 @@ def spline_interpolation_kspace(kspace_undersampled, mask, order=3):
     
     return from_kspace(kspace_filled)
 
-
-def image_domain_interpolation(zero_filled_image, mask, method='bilinear'):
-    """Interpolation in image domain"""
-    # Create mask in image domain based on k-space undersampling
-    image_mask = np.real(from_kspace(mask.astype(float))) > 0.1
-    
-    # Coordinates for interpolation
-    coords = np.array(np.where(image_mask)).T
-    values = zero_filled_image[image_mask]
-    
-    # Grid for interpolation
-    xi, yi = np.meshgrid(np.arange(zero_filled_image.shape[1]),
-                         np.arange(zero_filled_image.shape[0]))
-    
-    # Interpolate
-    if method == 'bilinear':
-        interpolated = interpolate.griddata(
-            coords, values, (yi, xi), method='linear'
-        )
-    elif method == 'cubic':
-        interpolated = interpolate.griddata(
-            coords, values, (yi, xi), method='cubic'
-        )
-    
-    # Fill NaN values with zero-filling
-    interpolated[np.isnan(interpolated)] = zero_filled_image[np.isnan(interpolated)]
-    
-    return interpolated
-
 def low_pass_filter_recon(kspace_undersampled, mask, sigma=1.0):
     """Reconstruction with low-pass filter"""
     # Zero-filling
@@ -238,3 +209,65 @@ for phantom_type in phantom_types:
             'mask': mask,
             'recons': recons
         }
+
+# %%
+
+def plot_reconstruction_comparison(phantom, mask, recons, title=""):
+    """Compare different reconstruction methods"""
+    n_methods = len(recons)
+    fig, axes = plt.subplots(3, n_methods + 1, figsize=(20, 12))
+    
+    # Original and mask
+    axes[0, 0].imshow(phantom, cmap='gray', vmin=0, vmax=1)
+    axes[0, 0].set_title('Original')
+    axes[0, 0].axis('off')
+    
+    axes[1, 0].imshow(mask, cmap='gray', aspect='auto')
+    axes[1, 0].set_title(f'Sampling Pattern\n(Acceleration: {acceleration}x)')
+    axes[1, 0].set_ylabel('k-space line')
+    
+    # Prepare metrics plot
+    axes[2, 0].axis('off')
+    
+    # Reconstructions
+    metrics_text = []
+    for idx, (method_name, recon) in enumerate(recons.items(), 1):
+        # Reconstructed image
+        axes[0, idx].imshow(recon, cmap='gray', vmin=0, vmax=1)
+        axes[0, idx].set_title(method_name)
+        axes[0, idx].axis('off')
+        
+        # Error map
+        error = np.abs(phantom - recon)
+        im = axes[1, idx].imshow(error, cmap='hot', vmin=0, vmax=0.5)
+        axes[1, idx].set_title('Error Map')
+        axes[1, idx].axis('off')
+        
+        # Calculate metrics
+        psnr_val = psnr(phantom, recon, data_range=1.0)
+        ssim_val = ssim(phantom, recon, data_range=1.0)
+        rmse = np.sqrt(np.mean(error**2))
+        
+        # Display metrics
+        metrics_str = f"{method_name}:\nPSNR: {psnr_val:.2f} dB\nSSIM: {ssim_val:.3f}\nRMSE: {rmse:.4f}"
+        axes[2, idx].text(0.5, 0.5, metrics_str, 
+                         ha='center', va='center', 
+                         fontsize=10, 
+                         bbox=dict(boxstyle="round,pad=0.3", 
+                                  facecolor="lightgray"))
+        axes[2, idx].axis('off')
+    
+    plt.suptitle(title, fontsize=16)
+    plt.tight_layout()
+    return fig
+
+# %%
+for key, data in results.items():
+    fig = plot_reconstruction_comparison(
+        data['phantom'], 
+        data['mask'], 
+        data['recons'],
+        title=f"Reconstruction Comparison: {key}"
+    )
+    plt.show()
+# %%
