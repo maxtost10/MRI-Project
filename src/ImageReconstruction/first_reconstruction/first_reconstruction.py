@@ -1,12 +1,16 @@
 import numpy as np
 from numpy.fft import fft2, ifft2, fftshift, ifftshift
 import matplotlib.pyplot as plt
+from typing import Tuple
 
-def create_shepp_logan_phantom(size: int=256):
-    """Create a Test-Phantom.
+def create_shepp_logan_phantom(size: int = 256) -> np.ndarray:
+    """Create a simplified Shepp-Logan phantom.
     
     Args:
-        - size (int): The size of the phantom in pixels.
+        size: The size of the phantom in pixels (creates size x size image).
+
+    Returns:
+        2D phantom image with two concentric circles.
     """
     x = np.linspace(-1, 1, size)
     y = np.linspace(-1, 1, size)
@@ -23,16 +27,38 @@ def create_shepp_logan_phantom(size: int=256):
     
     return phantom
 
-def to_kspace(image):
-    """Convert image to k-space"""
+def to_kspace(image: np.ndarray) -> np.ndarray:
+    """Convert image to k-space using 2D FFT.
+    
+    Args:
+        image: Input image array.
+        
+    Returns:
+        K-space representation with DC component centered.
+    """
     return fftshift(fft2(ifftshift(image)))
 
-def from_kspace(kspace):
-    """Reconstruct image from k-space"""
+def from_kspace(kspace: np.ndarray) -> np.ndarray:
+    """Reconstruct image from k-space using inverse 2D FFT.
+    
+    Args:
+        kspace: K-space data with centered DC component.
+        
+    Returns:
+        Reconstructed image (magnitude only).
+    """
     return np.abs(fftshift(ifft2(ifftshift(kspace))))
 
-def create_random_mask(shape, acceleration=4):
-    """Creates a random subsampling mask."""
+def create_random_mask(shape: Tuple[int, int], acceleration: int = 4) -> np.ndarray:
+    """Create a random subsampling mask for undersampled MRI.
+    
+    Args:
+        shape: Shape of the k-space data (height, width).
+        acceleration: Acceleration factor for undersampling.
+        
+    Returns:
+        Binary mask where 1 indicates sampled k-space lines.
+    """
     mask = np.zeros(shape)
     # Keep central k-space lines (low frequencies)
     center_fraction = 0.08
