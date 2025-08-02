@@ -7,16 +7,42 @@ from numpy.fft import fft2, ifft2, fftshift, ifftshift
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 
-def to_kspace(image):
-    """Convert image to k-space."""
+def to_kspace(image: np.ndarray) -> np.ndarray:
+    """Convert image to k-space using 2D FFT.
+    
+    Args:
+        image: Input image array.
+        
+    Returns:
+        K-space representation with DC component centered.
+    """
     return fftshift(fft2(ifftshift(image)))
 
-def from_kspace(kspace):
-    """Reconstruct image from k-space"""
+def from_kspace(kspace: np.ndarray) -> np.ndarray:
+    """Reconstruct image from k-space using inverse 2D FFT.
+    
+    Args:
+        kspace: K-space data with centered DC component.
+        
+    Returns:
+        Reconstructed image (magnitude only).
+    """
     return np.abs(fftshift(ifft2(ifftshift(kspace))))
 
 def create_phantom(size=256, phantom_type='shepp_logan'):
-    """Create various test phantoms"""
+    """Create various test phantoms
+    
+    Args:
+        size: The size of the phantom in pixels (creates size x size image).
+        phantom_type:
+            - 'shepp_logan': Will create a phantom with ellipses of varying
+                    brigtness
+            - 'resoltion': Phantom with sinusoids of different frequencies
+
+    Returns:
+        2D phantom image.
+    
+    """
     x = np.linspace(-1, 1, size)
     y = np.linspace(-1, 1, size)
     X, Y = np.meshgrid(x, y)
@@ -49,8 +75,27 @@ def create_phantom(size=256, phantom_type='shepp_logan'):
     
     return phantom
 
-def create_undersampling_mask(shape, pattern='random', acceleration=4):
-    """Create various undersampling patterns"""
+def create_undersampling_mask(
+        shape: np.ndarray,
+        pattern: str='random',
+        acceleration=4
+    ) -> np.ndarray:
+    """Create various undersampling patterns
+    
+    Args:
+        shape (np.ndarray): shape of the undersampling mask
+        pattern (str):
+            - 'random': will create a mask where the center 8% of k_x frequencies
+                    are set to True, and 1/acceleration of the rest is 
+                    set to True randomly.
+            - 'regular': Passes every acceleration part of the k_x values
+            - 'radial': 1/acceleration part of the available angular sections are
+                    set to True randomly.
+
+    Returns:
+        mask (np.ndarray): The mask, where values that are passed when multiplied
+            are set to True.
+    """
     mask = np.zeros(shape, dtype=bool)
     
     if pattern == 'random':
@@ -78,7 +123,7 @@ def create_undersampling_mask(shape, pattern='random', acceleration=4):
         
     elif pattern == 'radial':
         # Radial undersampling (simulated)
-        num_spokes = shape[0] // acceleration
+        num_spokes = (shape[0] + shape[1]) // acceleration
         angles = np.linspace(0, np.pi, num_spokes, endpoint=False)
         center = np.array(shape) // 2
         
