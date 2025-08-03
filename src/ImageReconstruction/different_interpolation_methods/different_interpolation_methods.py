@@ -6,6 +6,10 @@ from scipy.ndimage import gaussian_filter
 from numpy.fft import fft2, ifft2, fftshift, ifftshift
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
+from typing import Dict, Tuple, Union
+import pandas as pd
+from scipy.interpolate import interp1d
+from scipy.ndimage import map_coordinates
 
 def to_kspace(image: np.ndarray) -> np.ndarray:
     """Convert image to k-space using 2D FFT.
@@ -29,24 +33,23 @@ def from_kspace(kspace: np.ndarray) -> np.ndarray:
     """
     return np.abs(fftshift(ifft2(ifftshift(kspace))))
 
-def create_phantom(size=256, phantom_type='shepp_logan'):
-    """Create various test phantoms
+def create_phantom(size: int = 256, phantom_type: str = 'shepp_logan') -> np.ndarray:
+    """Create various test phantoms for MRI reconstruction testing.
     
     Args:
-        size: The size of the phantom in pixels (creates size x size image).
-        phantom_type:
-            - 'shepp_logan': Will create a phantom with ellipses of varying
-                    brigtness
-            - 'resoltion': Phantom with sinusoids of different frequencies
+        size: Size of the phantom in pixels (creates size x size image).
+        phantom_type: Type of phantom to create.
+            - 'shepp_logan': Phantom with ellipses of varying brightness
+            - 'resolution': Phantom with sinusoids of different frequencies
+            for spatial resolution testing.
 
     Returns:
-        2D phantom image.
-    
+        2D phantom image as numpy array.
     """
     x = np.linspace(-1, 1, size)
     y = np.linspace(-1, 1, size)
     X, Y = np.meshgrid(x, y)
-    phantom=None
+    phantom = None
     
     if phantom_type == 'shepp_logan':
         # Simplified Shepp-Logan phantom
@@ -76,25 +79,24 @@ def create_phantom(size=256, phantom_type='shepp_logan'):
     return phantom
 
 def create_undersampling_mask(
-        shape: np.ndarray,
-        pattern: str='random',
-        acceleration=4
+        shape: Tuple[int, int],
+        pattern: str = 'random',
+        acceleration: int = 4
     ) -> np.ndarray:
-    """Create various undersampling patterns
+    """Create various undersampling patterns for accelerated MRI.
     
     Args:
-        shape (np.ndarray): shape of the undersampling mask
-        pattern (str):
-            - 'random': will create a mask where the center 8% of k_x frequencies
-                    are set to True, and 1/acceleration of the rest is 
-                    set to True randomly.
-            - 'regular': Passes every acceleration part of the k_x values
-            - 'radial': 1/acceleration part of the available angular sections are
-                    set to True randomly.
+        shape: Shape of the undersampling mask (height, width).
+        pattern: Type of undersampling pattern to create.
+            - 'random': Center 8% of k_x frequencies are fully sampled,
+                with 1/acceleration of remaining lines sampled randomly.
+            - 'regular': Every acceleration-th k_x line is sampled.
+            - 'radial': 1/acceleration of available angular sections are
+                sampled randomly for radial trajectory simulation.
+        acceleration: Acceleration factor for undersampling.
 
     Returns:
-        mask (np.ndarray): The mask, where values that are passed when multiplied
-            are set to True.
+        Binary mask where True indicates sampled k-space locations.
     """
     mask = np.zeros(shape, dtype=bool)
     
@@ -141,9 +143,16 @@ def create_undersampling_mask(
     
     return mask
 
-
-def linear_interpolation_kspace(kspace_undersampled, mask):
-    """Linear interpolation in k-space"""
+def linear_interpolation_kspace(kspace_undersampled: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Reconstruct image using linear interpolation in k_x-direction.
+    
+    Args:
+        kspace_undersampled: Undersampled k-space data with missing values set to zero.
+        mask: Binary mask indicating sampled k-space locations.
+        
+    Returns:
+        Reconstructed image after k-space interpolation and inverse FFT.
+    """
     kspace_filled = kspace_undersampled.copy()
     
     # For each row
@@ -175,19 +184,15 @@ def linear_interpolation_kspace(kspace_undersampled, mask):
     
     return from_kspace(kspace_filled)
 
-import numpy as np
-from scipy.interpolate import interp1d
-from scipy.ndimage import map_coordinates
-
-def radial_interpolation_kspace(k_space_undersampled, mask):
-    """Radial interpolation in k-space
+def radial_interpolation_kspace(k_space_undersampled: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Reconstruct image using radial interpolation in k-space.
     
     Args:
-        k_space_undersampled: Complex numpy array of undersampled k-space data
-        mask: Binary mask indicating sampled locations (1 = sampled, 0 = not sampled)
+        k_space_undersampled: Complex undersampled k-space data.
+        mask: Binary mask indicating sampled locations (True = sampled).
     
     Returns:
-        kspace_filled: Interpolated k-space data
+        Reconstructed image after radial k-space interpolation.
     """
     kspace_filled = k_space_undersampled.copy()
     
@@ -294,9 +299,17 @@ def radial_interpolation_kspace(k_space_undersampled, mask):
     
     return from_kspace(kspace_filled)
 
-
-def spline_interpolation_kspace(kspace_undersampled, mask, order=3):
-    """Spline interpolation in k-space"""
+def spline_interpolation_kspace(kspace_undersampled: np.ndarray, mask: np.ndarray, order: int = 3) -> np.ndarray:
+    """Reconstruct image using spline interpolation in k-space.
+    
+    Args:
+        kspace_undersampled: Undersampled k-space data.
+        mask: Binary mask indicating sampled locations.
+        order: Order of spline interpolation (default: 3 for cubic splines).
+        
+    Returns:
+        Reconstructed image after spline interpolation in k-space.
+    """
     kspace_filled = kspace_undersampled.copy()
     
     for i in range(kspace_filled.shape[0]):
@@ -325,8 +338,17 @@ def spline_interpolation_kspace(kspace_undersampled, mask, order=3):
     
     return from_kspace(kspace_filled)
 
-def low_pass_filter_recon(kspace_undersampled, mask, sigma=1.0):
-    """Reconstruction with low-pass filter"""
+def low_pass_filter_recon(kspace_undersampled: np.ndarray, mask: np.ndarray, sigma: float = 1.0) -> np.ndarray:
+    """Reconstruct image using zero-filling followed by Gaussian low-pass filtering.
+    
+    Args:
+        kspace_undersampled: Undersampled k-space data.
+        mask: Binary mask indicating sampled locations (unused but kept for consistency).
+        sigma: Standard deviation for Gaussian filter (higher = more smoothing).
+        
+    Returns:
+        Low-pass filtered reconstruction.
+    """
     image = from_kspace(kspace_undersampled)
     
     # Gaussian low-pass filter
@@ -334,9 +356,13 @@ def low_pass_filter_recon(kspace_undersampled, mask, sigma=1.0):
     
     return filtered
 
-
-def analyze_frequency_response(phantom, recons):
-    """Analyze frequency response of different methods"""
+def analyze_frequency_response(phantom: np.ndarray, recons: Dict[str, np.ndarray]) -> None:
+    """Analyze and visualize frequency response of different reconstruction methods.
+    
+    Args:
+        phantom: Original phantom image.
+        recons: Dictionary of reconstruction method names and their results.
+    """
     _, axes = plt.subplots(2, len(recons) + 1, figsize=(20, 8))
     
     # Original k-space
@@ -348,7 +374,7 @@ def analyze_frequency_response(phantom, recons):
     axes[0, 0].axis('off')
     
     # 1D profile through k-space center
-    center_profile_original = np.abs(kspace_original[size//2, :])
+    center_profile_original = np.abs(kspace_original[phantom.shape[0]//2, :])
     axes[1, 0].plot(center_profile_original)
     axes[1, 0].set_title('k-space Profile (center line)')
     axes[1, 0].set_yscale('log')
@@ -365,7 +391,7 @@ def analyze_frequency_response(phantom, recons):
         axes[0, idx].axis('off')
         
         # Profile
-        center_profile_recon = np.abs(kspace_recon[size//2, :])
+        center_profile_recon = np.abs(kspace_recon[phantom.shape[0]//2, :])
         axes[1, idx].plot(center_profile_original, 'b-', alpha=0.5, label='Original')
         axes[1, idx].plot(center_profile_recon, 'r-', label='Recon')
         axes[1, idx].set_title(f'{method_name} Profile')
@@ -376,9 +402,25 @@ def analyze_frequency_response(phantom, recons):
     plt.tight_layout()
     plt.show()
 
-
-def plot_reconstruction_comparison(phantom, mask, recons, title=""):
-    """Compare different reconstruction methods"""
+def plot_reconstruction_comparison(
+        phantom: np.ndarray, 
+        mask: np.ndarray, 
+        recons: Dict[str, np.ndarray], 
+        title: str = "",
+        acceleration: int = 4
+    ) -> plt.Figure:
+    """Compare different reconstruction methods with metrics visualization.
+    
+    Args:
+        phantom: Original phantom image.
+        mask: Undersampling mask used.
+        recons: Dictionary of reconstruction method names and results.
+        title: Title for the plot.
+        acceleration: Acceleration factor used for undersampling.
+        
+    Returns:
+        Matplotlib figure object.
+    """
     n_methods = len(recons)
     fig, axes = plt.subplots(3, n_methods + 1, figsize=(20, 12))
     
@@ -425,6 +467,34 @@ def plot_reconstruction_comparison(phantom, mask, recons, title=""):
     plt.tight_layout()
     return fig
 
+def create_summary_table(results: Dict[str, Dict]) -> pd.DataFrame:
+    """Create summary table of reconstruction metrics for all methods and scenarios.
+    
+    Args:
+        results: Dictionary containing reconstruction results for different scenarios.
+        
+    Returns:
+        Pandas DataFrame with metrics summary.
+    """
+    summary_data = []
+    
+    for scenario, data in results.items():
+        phantom = data['phantom']
+        for method, recon in data['recons'].items():
+            psnr_val = psnr(phantom, recon, data_range=1.0)
+            ssim_val = ssim(phantom, recon, data_range=1.0)
+            rmse = np.sqrt(np.mean((phantom - recon)**2))
+            
+            summary_data.append({
+                'Scenario': scenario,
+                'Method': method,
+                'PSNR (dB)': f"{psnr_val:.2f}",
+                'SSIM': f"{ssim_val:.3f}",
+                'RMSE': f"{rmse:.4f}"
+            })
+    
+    df = pd.DataFrame(summary_data)
+    return df
 
 # %%
 plt.rcParams['figure.figsize'] = (15, 10)
@@ -464,46 +534,21 @@ for phantom_type in phantom_types:
             'recons': recons
         }
 
-
 for key, data in results.items():
     fig = plot_reconstruction_comparison(
         data['phantom'], 
         data['mask'], 
         data['recons'],
-        title=f"Reconstruction Comparison: {key}"
+        title=f"Reconstruction Comparison: {key}",
+        acceleration=acceleration
     )
     plt.show()
 
-
-# Analyze frequency response for Shepp-Logan with random sampling
+# %% Analyze frequency response for Shepp-Logan with random sampling
 data = results['shepp_logan_random']
 analyze_frequency_response(data['phantom'], data['recons'])
 
 # %%
-import pandas as pd
-
-def create_summary_table(results):
-    """Create overview table of all metrics"""
-    summary_data = []
-    
-    for scenario, data in results.items():
-        phantom = data['phantom']
-        for method, recon in data['recons'].items():
-            psnr_val = psnr(phantom, recon, data_range=1.0)
-            ssim_val = ssim(phantom, recon, data_range=1.0)
-            rmse = np.sqrt(np.mean((phantom - recon)**2))
-            
-            summary_data.append({
-                'Scenario': scenario,
-                'Method': method,
-                'PSNR (dB)': f"{psnr_val:.2f}",
-                'SSIM': f"{ssim_val:.3f}",
-                'RMSE': f"{rmse:.4f}"
-            })
-    
-    df = pd.DataFrame(summary_data)
-    return df
-
 # Show table
 summary_df = create_summary_table(results)
 print(summary_df.to_string(index=False))
@@ -527,5 +572,5 @@ for scenario in summary_df['Scenario'].unique():
 ### Next Steps:
 # - Compressed Sensing with L1 regularization
 # - Parallel imaging (SENSE/GRAPPA) when multi-coil data available
-# - First neural networks for post-processing
+# - Deep neural networks for post-processing
 # %%
