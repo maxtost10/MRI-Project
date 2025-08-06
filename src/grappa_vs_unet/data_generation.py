@@ -28,7 +28,7 @@ def create_random_shepp_logan(size: int = 256, num_ellipses: int = None) -> np.n
         2D phantom image as numpy array.
     """
     if num_ellipses is None:
-        num_ellipses = np.random.randint(3, 8)
+        num_ellipses = np.random.randint(5, 13)
     
     x = np.linspace(-1, 1, size)
     y = np.linspace(-1, 1, size)
@@ -49,8 +49,8 @@ def create_random_shepp_logan(size: int = 256, num_ellipses: int = None) -> np.n
         cy = np.random.uniform(-0.5, 0.5)
         
         # Random size
-        width = np.random.uniform(0.1, 0.4)
-        height = np.random.uniform(0.1, 0.4)
+        width = np.random.uniform(0.1, 0.3)
+        height = np.random.uniform(0.1, 0.3)
         
         # Random angle
         angle = np.random.uniform(0, np.pi)
@@ -211,3 +211,4 @@ if __name__ == "__main__":
     
     # Visualize some samples
     visualize_samples('./mri_dataset.h5', num_samples=4)
+# %%
