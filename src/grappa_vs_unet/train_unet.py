@@ -1,18 +1,15 @@
 # %%
 import torch
 import torch.nn as nn
-import torch.optim as optim
+import torch.nn.functional as F
+import pytorch_lightning as pl
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import h5py
-from pathlib import Path
 import matplotlib.pyplot as plt
-from tqdm import tqdm
-from typing import Tuple
-import wandb
-
-# Initialize wandb (optional, comment out if not using)
-# wandb.init(project="mri-reconstruction", name="unet-kspace")
+from typing import Tuple, Optional
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
 
 class MRIDataset(Dataset):
     """PyTorch dataset for MRI reconstruction."""
@@ -53,46 +50,58 @@ class MRIDataset(Dataset):
             
         return kspace_us_tensor, kspace_full_tensor, mask_tensor
 
-class UNet(nn.Module):
-    """U-Net architecture for k-space reconstruction."""
+class AdaptiveUNet(nn.Module):
+    """U-Net with acceleration-factor-aware architecture."""
     
-    def __init__(self, in_channels: int = 2, out_channels: int = 2):
-        super(UNet, self).__init__()
+    def __init__(self, in_channels: int = 2, out_channels: int = 2, acceleration: int = 4):
+        super(AdaptiveUNet, self).__init__()
         
-        # Encoder
-        self.enc1 = self.conv_block(in_channels, 64)
-        self.enc2 = self.conv_block(64, 128)
-        self.enc3 = self.conv_block(128, 256)
-        self.enc4 = self.conv_block(256, 512)
+        self.acceleration = acceleration
+        
+        # Adaptive kernel sizes based on acceleration factor
+        # For the main convolutions, use larger kernels to capture wider spatial relationships
+        main_kernel = min(7, 2 * acceleration + 1)  # e.g., 7 for R=4, 9 for R=8
+        
+        # Encoder with adaptive kernels
+        self.enc1 = self.conv_block(in_channels, 64, kernel_size=main_kernel)
+        self.enc2 = self.conv_block(64, 128, kernel_size=main_kernel)
+        self.enc3 = self.conv_block(128, 256, kernel_size=5)  # Slightly smaller for deeper layers
+        self.enc4 = self.conv_block(256, 512, kernel_size=3)  # Standard for high-level features
         
         # Bottleneck
-        self.bottleneck = self.conv_block(512, 1024)
+        self.bottleneck = self.conv_block(512, 1024, kernel_size=3)
         
-        # Decoder
+        # Decoder with adaptive upsampling
         self.upconv4 = nn.ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
-        self.dec4 = self.conv_block(1024, 512)
+        self.dec4 = self.conv_block(1024, 512, kernel_size=3)
         
         self.upconv3 = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
-        self.dec3 = self.conv_block(512, 256)
+        self.dec3 = self.conv_block(512, 256, kernel_size=5)
         
+        # These layers should handle the acceleration pattern specifically
         self.upconv2 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
-        self.dec2 = self.conv_block(256, 128)
+        self.dec2 = self.conv_block(256, 128, kernel_size=main_kernel)
         
         self.upconv1 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
-        self.dec1 = self.conv_block(128, 64)
+        self.dec1 = self.conv_block(128, 64, kernel_size=main_kernel)
         
-        # Final layer
-        self.final = nn.Conv2d(64, out_channels, kernel_size=1)
+        # Final layer with acceleration-specific kernel
+        self.final = nn.Conv2d(64, out_channels, kernel_size=main_kernel, padding=main_kernel//2)
         
+        # Pooling
         self.pool = nn.MaxPool2d(2)
+        
+        # Add acceleration-specific processing layer
+        self.accel_processor = AccelerationAwareLayer(64, acceleration)
     
-    def conv_block(self, in_channels: int, out_channels: int):
-        """Convolutional block with batch norm and ReLU."""
+    def conv_block(self, in_channels: int, out_channels: int, kernel_size: int = 3):
+        """Convolutional block with adaptive kernel size."""
+        padding = kernel_size // 2
         return nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, padding=padding),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         )
@@ -124,7 +133,49 @@ class UNet(nn.Module):
         dec1 = torch.cat([dec1, enc1], dim=1)
         dec1 = self.dec1(dec1)
         
+        # Apply acceleration-aware processing
+        dec1 = self.accel_processor(dec1)
+        
         return self.final(dec1)
+
+class AccelerationAwareLayer(nn.Module):
+    """Layer that explicitly handles acceleration patterns."""
+    
+    def __init__(self, channels: int, acceleration: int):
+        super().__init__()
+        self.acceleration = acceleration
+        
+        # Create specialized convolutions for handling undersampling patterns
+        # Vertical kernel to handle missing k-space lines
+        self.vertical_conv = nn.Conv2d(
+            channels, channels, 
+            kernel_size=(acceleration * 2 - 1, 1), 
+            padding=(acceleration - 1, 0),
+            groups=channels  # Depthwise convolution
+        )
+        
+        # Horizontal kernel for spatial consistency
+        self.horizontal_conv = nn.Conv2d(
+            channels, channels,
+            kernel_size=(1, 5),
+            padding=(0, 2),
+            groups=channels
+        )
+        
+        # Combine features
+        self.combine = nn.Conv2d(channels * 2, channels, kernel_size=1)
+        
+    def forward(self, x):
+        # Apply specialized convolutions
+        vertical_features = self.vertical_conv(x)
+        horizontal_features = self.horizontal_conv(x)
+        
+        # Combine and refine
+        combined = torch.cat([vertical_features, horizontal_features], dim=1)
+        output = self.combine(combined)
+        
+        # Residual connection
+        return output + x
 
 class DataConsistencyLayer(nn.Module):
     """Enforce data consistency in k-space."""
@@ -149,134 +200,254 @@ class DataConsistencyLayer(nn.Module):
         # Replace predicted values with measured values where available
         return pred_kspace * (1 - mask_expanded) + undersampled_kspace * mask_expanded
 
-def train_model(
-        dataset_path: str,
-        num_epochs: int = 100,
-        batch_size: int = 8,
+class MRIReconstructionLightning(pl.LightningModule):
+    """PyTorch Lightning module for MRI reconstruction."""
+    
+    def __init__(
+        self,
+        in_channels: int = 2,
+        out_channels: int = 2,
+        acceleration: int = 4,
         learning_rate: float = 1e-3,
-        device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
-        save_path: str = './unet_model.pth'
+        weight_decay: float = 1e-5,
+        use_adaptive_unet: bool = True
     ):
-    """Train U-Net model for MRI reconstruction."""
-    
-    # Create datasets and dataloaders
-    train_dataset = MRIDataset(dataset_path, mode='train')
-    val_dataset = MRIDataset(dataset_path, mode='test')
-    
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-    
-    # Initialize model
-    model = UNet(in_channels=2, out_channels=2).to(device)
-    dc_layer = DataConsistencyLayer()
-    
-    # Loss and optimizer
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
-    
-    # Training history
-    train_losses = []
-    val_losses = []
-    best_val_loss = float('inf')
-    
-    print(f"Training on {device}")
-    print(f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}")
-    
-    for epoch in range(num_epochs):
-        # Training
-        model.train()
-        train_loss = 0
+        super().__init__()
+        self.save_hyperparameters()
         
-        pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Train]')
-        for kspace_us, kspace_full, mask in pbar:
-            kspace_us = kspace_us.to(device)
-            kspace_full = kspace_full.to(device)
-            mask = mask.to(device)
-            
-            # Forward pass
-            optimizer.zero_grad()
-            pred_kspace = model(kspace_us)
-            
-            # Apply data consistency
-            pred_kspace = dc_layer(pred_kspace, kspace_us, mask)
-            
-            # Compute loss
-            loss = criterion(pred_kspace, kspace_full)
-            
-            # Backward pass
-            loss.backward()
-            optimizer.step()
-            
-            train_loss += loss.item()
-            pbar.set_postfix({'loss': loss.item()})
+        # Model
+        if use_adaptive_unet:
+            self.model = AdaptiveUNet(in_channels, out_channels, acceleration)
+        else:
+            # You can add the standard UNet here if needed
+            raise NotImplementedError("Standard UNet not included in this version")
         
-        avg_train_loss = train_loss / len(train_loader)
-        train_losses.append(avg_train_loss)
+        # Data consistency layer
+        self.dc_layer = DataConsistencyLayer()
         
-        # Validation
-        model.eval()
-        val_loss = 0
+        # Loss
+        self.criterion = nn.MSELoss()
         
-        with torch.no_grad():
-            for kspace_us, kspace_full, mask in tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Val]'):
-                kspace_us = kspace_us.to(device)
-                kspace_full = kspace_full.to(device)
-                mask = mask.to(device)
-                
-                pred_kspace = model(kspace_us)
-                pred_kspace = dc_layer(pred_kspace, kspace_us, mask)
-                
-                loss = criterion(pred_kspace, kspace_full)
-                val_loss += loss.item()
-        
-        avg_val_loss = val_loss / len(val_loader)
-        val_losses.append(avg_val_loss)
-        
-        # Learning rate scheduling
-        scheduler.step(avg_val_loss)
-        
-        print(f"Epoch {epoch+1}: Train Loss = {avg_train_loss:.6f}, Val Loss = {avg_val_loss:.6f}")
-        
-        # Save best model
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'train_loss': avg_train_loss,
-                'val_loss': avg_val_loss,
-            }, save_path)
-            print(f"Model saved!")
-        
-        # Log to wandb if available
-        # wandb.log({
-        #     'train_loss': avg_train_loss,
-        #     'val_loss': avg_val_loss,
-        #     'learning_rate': optimizer.param_groups[0]['lr']
-        # })
+    def forward(self, x):
+        return self.model(x)
     
-    # Plot training history
-    plt.figure(figsize=(10, 6))
-    plt.plot(train_losses, label='Train Loss')
-    plt.plot(val_losses, label='Val Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.title('Training History')
-    plt.savefig('training_history.png')
-    plt.show()
+    def _shared_step(self, batch, batch_idx, stage: str):
+        kspace_us, kspace_full, mask = batch
+        
+        # Forward pass
+        pred_kspace = self.model(kspace_us)
+        
+        # Apply data consistency
+        pred_kspace = self.dc_layer(pred_kspace, kspace_us, mask)
+        
+        # Compute loss
+        loss = self.criterion(pred_kspace, kspace_full)
+        
+        # Log metrics
+        self.log(f'{stage}_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        
+        # Log additional metrics during validation
+        if stage == 'val':
+            # Compute PSNR
+            mse = torch.mean((pred_kspace - kspace_full) ** 2)
+            psnr = 20 * torch.log10(torch.tensor(1.0) / torch.sqrt(mse))
+            self.log('val_psnr', psnr, on_step=False, on_epoch=True, prog_bar=True)
+        
+        return loss
     
-    return model
+    def training_step(self, batch, batch_idx):
+        return self._shared_step(batch, batch_idx, 'train')
+    
+    def validation_step(self, batch, batch_idx):
+        return self._shared_step(batch, batch_idx, 'val')
+    
+    def test_step(self, batch, batch_idx):
+        return self._shared_step(batch, batch_idx, 'test')
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(
+            self.parameters(),
+            lr=self.hparams.learning_rate,
+            weight_decay=self.hparams.weight_decay
+        )
+        
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.5,
+            patience=5,
+            verbose=True
+        )
+        
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'monitor': 'val_loss',
+                'interval': 'epoch',
+                'frequency': 1
+            }
+        }
+    
+    def on_train_epoch_end(self):
+        # Log learning rate
+        current_lr = self.optimizers().param_groups[0]['lr']
+        self.log('learning_rate', current_lr, on_epoch=True)
+
+class MRIDataModule(pl.LightningDataModule):
+    """PyTorch Lightning data module for MRI reconstruction."""
+    
+    def __init__(
+        self,
+        dataset_path: str,
+        batch_size: int = 8,
+        num_workers: int = 4,
+        pin_memory: bool = True
+    ):
+        super().__init__()
+        self.dataset_path = dataset_path
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+    
+    def setup(self, stage: Optional[str] = None):
+        if stage == 'fit' or stage is None:
+            self.train_dataset = MRIDataset(self.dataset_path, mode='train')
+            self.val_dataset = MRIDataset(self.dataset_path, mode='test')
+        
+        if stage == 'test' or stage is None:
+            self.test_dataset = MRIDataset(self.dataset_path, mode='test')
+    
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False
+        )
+    
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False
+        )
+    
+    def test_dataloader(self):
+        return DataLoader(
+            self.test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory
+        )
+
+def train_model_lightning(
+    dataset_path: str,
+    num_epochs: int = 50,
+    batch_size: int = 8,
+    learning_rate: float = 1e-3,
+    acceleration: int = 4,
+    gpus: int = 1,
+    use_wandb: bool = True,
+    project_name: str = "mri-reconstruction",
+    run_name: str = "adaptive-unet-lightning"
+):
+    """Train model using PyTorch Lightning."""
+    
+    # Create data module
+    data_module = MRIDataModule(
+        dataset_path=dataset_path,
+        batch_size=batch_size,
+        num_workers=4
+    )
+    
+    # Create model
+    model = MRIReconstructionLightning(
+        in_channels=2,
+        out_channels=2,
+        acceleration=acceleration,
+        learning_rate=learning_rate,
+        use_adaptive_unet=True
+    )
+    
+    # Callbacks
+    callbacks = [
+        ModelCheckpoint(
+            monitor='val_loss',
+            dirpath='checkpoints',
+            filename='mri-recon-{epoch:02d}-{val_loss:.4f}',
+            save_top_k=3,
+            mode='min',
+            save_last=True
+        ),
+        LearningRateMonitor(logging_interval='epoch'),
+        EarlyStopping(
+            monitor='val_loss',
+            patience=10,
+            mode='min',
+            verbose=True
+        )
+    ]
+    
+    # Logger
+    logger = None
+    if use_wandb:
+        logger = WandbLogger(
+            project=project_name,
+            name=run_name,
+            save_dir='logs'
+        )
+        logger.watch(model)
+    
+    # Trainer
+    trainer = pl.Trainer(
+        max_epochs=num_epochs,
+        accelerator='gpu' if gpus > 0 else 'cpu',
+        devices=gpus if gpus > 0 else 1,
+        callbacks=callbacks,
+        logger=logger,
+        log_every_n_steps=10,
+        gradient_clip_val=1.0,
+        deterministic=True,
+        precision=16 if gpus > 0 else 32  # Mixed precision if using GPU
+    )
+    
+    # Train
+    trainer.fit(model, data_module)
+    
+    # Test
+    trainer.test(model, data_module)
+    
+    return model, trainer
 
 # %%
 if __name__ == "__main__":
+    # Set random seed for reproducibility
+    pl.seed_everything(42)
+    
     # Train model
-    model = train_model(
+    model, trainer = train_model_lightning(
         dataset_path='./mri_dataset.h5',
         num_epochs=50,
         batch_size=8,
         learning_rate=1e-3,
-        save_path='./unet_model.pth'
+        acceleration=4,
+        gpus=1 if torch.cuda.is_available() else 0,
+        use_wandb=False,  # Set to True if you want to use Weights & Biases
+        project_name="mri-reconstruction",
+        run_name="adaptive-unet-lightning"
     )
+    
+    # Save final model in standard PyTorch format for compatibility
+    torch.save({
+        'model_state_dict': model.model.state_dict(),
+        'hparams': model.hparams
+    }, './unet_model_lightning.pth')
+    
+    print("Training completed!")
