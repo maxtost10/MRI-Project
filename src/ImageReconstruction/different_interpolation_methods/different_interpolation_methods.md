@@ -1,91 +1,99 @@
-# Evaluation of Interpolation-Based MRI Reconstruction Techniques on Synthetic Phantoms
+# Evaluation of Interpolation-Based MRI Reconstruction Techniques Using Linear and Radial Interpolation
 
 ## Overview
 
-This study investigates the effectiveness of several interpolation-based image reconstruction techniques under simulated magnetic resonance imaging (MRI) undersampling. The goal is to evaluate the degree to which simple interpolation methods can recover image quality when data is acquired with fewer samples than the Nyquist criterion requires.
+This study evaluates the performance of various interpolation-based image reconstruction methods applied to undersampled magnetic resonance imaging (MRI) data. Using synthetic phantoms and controlled sampling patterns, we assess the capacity of simple linear interpolation schemes to recover image structure and quantify the resulting image quality.
 
 ## Methodology
 
 ### 1. Phantom Generation
 
-We use two types of phantoms:
+Two phantoms were synthetically generated:
 
-- **Shepp-Logan Phantom**: Composed of multiple ellipses of varying intensity, commonly used in tomographic reconstruction studies.
-- **Resolution Phantom**: Contains horizontal sinusoidal gratings of increasing spatial frequency in five segments. This tests spatial resolution preservation across reconstruction techniques.
+- **Shepp-Logan Phantom**: Simulates human head cross-sections via overlapping ellipses with different intensities. A standard benchmark in tomographic reconstruction.
+- **Resolution Phantom**: Horizontal bands filled with sinusoids of increasing frequency to probe spatial resolution capabilities.
 
-Both phantoms are generated at \(256 \times 256\) resolution.
+All phantoms are sized \(256 \times 256\) pixels.
 
 ### 2. k-Space Undersampling
 
-Undersampling is performed in k-space using binary masks with an acceleration factor of 4 (i.e., 25% of the data is retained). Two sampling schemes are tested:
+Undersampling was implemented in k-space using binary masks (True = sampled). Two sampling strategies were evaluated, each with an acceleration factor of 4:
 
-- **Radial**: Simulates spokes emanating from the center of k-space, mimicking radial acquisition protocols.
-- **Random**: Retains a fully sampled central region (8% of frequency lines) and randomly selects remaining lines.
+- **Radial Sampling**: Lines (spokes) through the k-space center are retained. Mimics non-Cartesian acquisitions.
+- **Random Cartesian Sampling**: Fully samples the center 8% of k-space (low-frequency content), while randomly selecting the remaining lines to meet the acceleration target.
 
 ### 3. Reconstruction Techniques
 
-Four reconstruction methods are applied to the undersampled k-space data:
+The following methods were applied to the undersampled k-space:
 
 #### a. **Inverse Fourier (Zero-filling)**
 
-The missing data in k-space is treated as zero. An inverse 2D FFT is applied directly.
+Missing data is zero-filled. The image is reconstructed directly using inverse 2D FFT.
 
 #### b. **Linear Interpolation (kx-direction)**
 
-Missing k-space values are filled by linearly interpolating the real and imaginary parts along each kx-row (horizontal frequency axis).
+Real and imaginary parts are interpolated separately along the frequency-encoding direction (horizontal lines in k-space).
 
-#### c. **Radial Interpolation**
+#### c. **Radial Interpolation (Linear)**
 
-Missing values are estimated along radial lines passing through the center of k-space. A cubic spline is fitted to sampled values along each radial spoke and used to interpolate unsampled values.
+Interpolation is performed along radial spokes in k-space using **linear interpolation**. For each angle:
+- Sampled complex values along the radial line are extracted.
+- 1D linear interpolation is applied to fill missing samples.
+- Only values within the interpolation domain are updated.
 
 #### d. **Low-Pass Filtering**
 
-After zero-filling, the image is smoothed in the image domain using a Gaussian filter with \(\sigma = 2.0\).
+Reconstruction is performed via zero-filling, followed by Gaussian filtering in the image domain to suppress high-frequency artifacts.
+
+---
 
 ## Results
 
-Reconstructions are assessed using:
+Reconstructed images were evaluated using:
 
-- **PSNR** (Peak Signal-to-Noise Ratio)
+- **PSNR** (Peak Signal-to-Noise Ratio, dB)
 - **SSIM** (Structural Similarity Index)
 - **RMSE** (Root Mean Squared Error)
-- Visual inspection of reconstructions and error maps
 
-### Shepp-Logan Phantom Reconstructions
+Each method was applied to the Shepp-Logan phantom using both sampling masks. The visual results and associated metrics are presented below.
 
-**Sampling Pattern: Radial**
+### Shepp-Logan Phantom — Radial Sampling
 
 ![](./Figures/Shepp_Logan_Radial.png)
 
-**Sampling Pattern: Random**
+### Shepp-Logan Phantom — Random Sampling
 
 ![](./Figures/Shepp_Logan_Random.png)
 
-### Observations
+---
 
-- **Sampling symmetry matters**: Interpolation schemes perform best when aligned with the sampling pattern. For instance, linear interpolation along kx performs better on Cartesian/random masks, while radial interpolation suits radial masks.
-- **Artifacts dominate**: All interpolation-based methods introduce reconstruction artifacts (e.g., streaking in radial, blurring in low-pass). These artifacts degrade SSIM more than they improve PSNR.
-- **Simple zero-filling sometimes outperforms**: The inverse Fourier transform of the undersampled data (without interpolation) often produces fewer artifacts than over-smoothed or incorrectly interpolated reconstructions.
-- **Low-pass filtering helps denoise but sacrifices detail**: It smooths noise but suppresses high-frequency features.
+## Observations
+
+- **Inverse Fourier (Zero-filling)** provided a surprisingly strong baseline, especially for radially sampled data. The lack of interpolation artifacts helped preserve global structure.
+- **Linear Interpolation in kx** performed poorly under radial sampling due to mismatch between sampling geometry and interpolation direction. Artifacts were pronounced and anisotropic. Performes better than cubic extrapolation.
+- **Linear Radial Interpolation** produced significantly cleaner reconstructions than cubic radial interpolation (from the previous experiment). Linear interpolation avoids the overshooting artifacts sometimes introduced by cubic splines, resulting in improved PSNR and lower RMSE.
+- **Low-Pass Filtering** removed high-frequency noise but at the cost of strong blurring. SSIM improved modestly, but structural sharpness was lost.
+
+---
 
 ## Quantitative Summary
-
-Below is a summary of the reconstruction metrics:
 
 | Scenario                | Method             | PSNR (dB) | SSIM   | RMSE   |
 |------------------------|--------------------|-----------|--------|--------|
 | shepp_logan_radial     | Inverse Fourier     | 28.60     | 0.491  | 0.0371 |
 | shepp_logan_radial     | Linear k-space      | 4.50      | 0.148  | 0.5957 |
-| shepp_logan_radial     | Radial k-space      | 21.35     | 0.230  | 0.0856 |
+| shepp_logan_radial     | Radial k-space      | 27.46     | 0.423  | 0.0424 |
 | shepp_logan_radial     | Low-pass Filter     | 22.62     | 0.540  | 0.0739 |
-| shepp_logan_random     | Inverse Fourier     | 21.13     | 0.384  | 0.0878 |
-| shepp_logan_random     | Linear k-space      | 19.49     | 0.319  | 0.1061 |
-| shepp_logan_random     | Radial k-space      | 11.79     | 0.062  | 0.2574 |
-| shepp_logan_random     | Low-pass Filter     | 20.03     | 0.443  | 0.0997 |
+| shepp_logan_random     | Inverse Fourier     | 21.20     | 0.366  | 0.0871 |
+| shepp_logan_random     | Linear k-space      | 19.22     | 0.306  | 0.1094 |
+| shepp_logan_random     | Radial k-space      | 19.99     | 0.248  | 0.1001 |
+| shepp_logan_random     | Low-pass Filter     | 19.98     | 0.417  | 0.1002 |
 
-*Best method per scenario (based on PSNR):*
-- `shepp_logan_radial`: Inverse Fourier
-- `shepp_logan_random`: Inverse Fourier
+**Best method per scenario (by PSNR):**
+- `shepp_logan_radial`: Inverse Fourier (28.60 dB), followed closely by **Linear Radial Interpolation** (27.46 dB)
+- `shepp_logan_random`: Inverse Fourier (21.20 dB)
+
+---
 
 ## Discussion
 
@@ -97,7 +105,6 @@ While interpolation-based reconstruction provides a basic mechanism for artifact
 
 These findings reinforce the notion that:
 
-- **Data-consistent methods** (e.g., compressed sensing, model-based iterative reconstruction) are necessary for robust recovery under strong undersampling.
 - **Interpolation alone is insufficient** and often degrades perceptual quality.
 
 ## Limitations and Future Work
