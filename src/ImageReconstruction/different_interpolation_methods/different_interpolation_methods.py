@@ -237,8 +237,8 @@ def radial_interpolation_kspace(k_space_undersampled: np.ndarray, mask: np.ndarr
         sampled_radii = sampled_radii[sort_idx]
         sampled_values = sampled_values[sort_idx]
 
-        f_real = interp1d(sampled_radii, sampled_values.real, kind='cubic', bounds_error=False, fill_value='extrapolate')
-        f_imag = interp1d(sampled_radii, sampled_values.imag, kind='cubic', bounds_error=False, fill_value='extrapolate')
+        f_real = interpolate.interp1d(sampled_radii, sampled_values.real, kind='linear', bounds_error=False, fill_value='extrapolate')
+        f_imag = interpolate.interp1d(sampled_radii, sampled_values.imag, kind='linear', bounds_error=False, fill_value='extrapolate')
 
         # Fill in unsampled points
         for i, (xi, yi, r) in enumerate(zip(x_int, y_int, radii)):
