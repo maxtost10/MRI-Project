@@ -49,3 +49,7 @@ One can see that the error map shows less error if the corresponding reconstruct
 
 ## Conclusion
 The reconstruction methods that were applied did not improve the image quality. The best reconstruction was always the direct backtransformation of the undersampled image, where the overall better sampling method is radial sampling.
+
+## Comments
+
+It has to be mentioned that this was a very artificial environment and that conclusions might not generalise to real world applications. However, it serves as an interesting toy example.
