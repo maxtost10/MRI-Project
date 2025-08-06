@@ -185,119 +185,69 @@ def linear_interpolation_kspace(kspace_undersampled: np.ndarray, mask: np.ndarra
     return from_kspace(kspace_filled)
 
 def radial_interpolation_kspace(k_space_undersampled: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """Reconstruct image using radial interpolation in k-space.
-    
+    """
+    Perform radial interpolation in k-space to fill missing (unsampled) values.
+
     Args:
-        k_space_undersampled: Complex undersampled k-space data.
-        mask: Binary mask indicating sampled locations (True = sampled).
-    
+        k_space_undersampled: 2D complex-valued numpy array with missing values.
+        mask: Binary numpy array (same shape) with True for sampled points.
+
     Returns:
-        Reconstructed image after radial k-space interpolation.
+        Filled k-space array, ready for inverse FFT reconstruction.
     """
     kspace_filled = k_space_undersampled.copy()
-    
-    # Get the center of k-space
-    center_y, center_x = np.array(mask.shape) // 2
-    
-    # Create coordinate grids
-    y, x = np.ogrid[:mask.shape[0], :mask.shape[1]]
-    
-    # Number of radial lines to use for interpolation
-    num_angles = 180  # You can adjust this for better coverage
-    
+    H, W = mask.shape
+    center_y, center_x = H // 2, W // 2
+
+    num_angles = max(H, W)  # Angular resolution scaled to image size
+    max_radius = np.sqrt(H**2 + W**2) / 2  # Maximum radius to reach any corner
+
     for angle in np.linspace(0, np.pi, num_angles, endpoint=False):
-        # Calculate the direction vector
-        dx = np.cos(angle)
-        dy = np.sin(angle)
-        
-        # Find the maximum radius for this angle
-        max_radius = min(
-            abs(center_x / dx) if dx != 0 else float('inf'),
-            abs(center_y / dy) if dy != 0 else float('inf'),
-            abs((mask.shape[1] - center_x - 1) / dx) if dx > 0 else float('inf'),
-            abs((mask.shape[0] - center_y - 1) / dy) if dy > 0 else float('inf')
-        )
-        
-        # Sample points along the radial line
+        dx, dy = np.cos(angle), np.sin(angle)
         radii = np.linspace(-max_radius, max_radius, int(2 * max_radius))
-        
-        # Calculate coordinates along the line
+
         x_coords = center_x + radii * dx
         y_coords = center_y + radii * dy
-        
-        # Keep only valid coordinates
-        valid_mask = (
-            (x_coords >= 0) & (x_coords < mask.shape[1]) &
-            (y_coords >= 0) & (y_coords < mask.shape[0])
+
+        # Filter out-of-bounds
+        valid = (
+            (x_coords >= 0) & (x_coords < W) &
+            (y_coords >= 0) & (y_coords < H)
         )
-        
-        x_coords = x_coords[valid_mask]
-        y_coords = y_coords[valid_mask]
-        radii = radii[valid_mask]
-        
-        # Get integer coordinates for mask checking
-        x_int = np.round(x_coords).astype(int)
-        y_int = np.round(y_coords).astype(int)
-        
-        # Find sampled points along this radial line
-        sampled_indices = []
-        sampled_values = []
+        x_coords, y_coords, radii = x_coords[valid], y_coords[valid], radii[valid]
+        x_int = np.clip(np.round(x_coords).astype(int), 0, W - 1)
+        y_int = np.clip(np.round(y_coords).astype(int), 0, H - 1)
+
+        # Collect sampled points
         sampled_radii = []
-        
+        sampled_values = []
         for i, (xi, yi, r) in enumerate(zip(x_int, y_int, radii)):
             if mask[yi, xi]:
-                sampled_indices.append(i)
-                # Use bilinear interpolation to get the exact value
-                value = map_coordinates(
-                    k_space_undersampled.real, 
-                    [[y_coords[i]], [x_coords[i]]], 
-                    order=1
-                ) + 1j * map_coordinates(
-                    k_space_undersampled.imag, 
-                    [[y_coords[i]], [x_coords[i]]], 
-                    order=1
-                )
-                sampled_values.append(value[0])
+                real = map_coordinates(k_space_undersampled.real, [[y_coords[i]], [x_coords[i]]], order=1)[0]
+                imag = map_coordinates(k_space_undersampled.imag, [[y_coords[i]], [x_coords[i]]], order=1)[0]
                 sampled_radii.append(r)
-        
-        # Skip if not enough points for interpolation
+                sampled_values.append(real + 1j * imag)
+
         if len(sampled_values) < 2:
             continue
-        
-        # Create interpolation function for this radial line
+
         sampled_radii = np.array(sampled_radii)
         sampled_values = np.array(sampled_values)
-        
-        # Sort by radius to ensure monotonic interpolation
         sort_idx = np.argsort(sampled_radii)
         sampled_radii = sampled_radii[sort_idx]
         sampled_values = sampled_values[sort_idx]
-        
-        # Create interpolation functions for real and imaginary parts
-        f_real = interp1d(
-            sampled_radii, 
-            sampled_values.real, 
-            kind='cubic', 
-            bounds_error=False, 
-            fill_value='extrapolate'
-        )
-        f_imag = interp1d(
-            sampled_radii, 
-            sampled_values.imag, 
-            kind='cubic', 
-            bounds_error=False, 
-            fill_value='extrapolate'
-        )
-        
-        # Interpolate missing points along this radial line
+
+        f_real = interp1d(sampled_radii, sampled_values.real, kind='cubic', bounds_error=False, fill_value='extrapolate')
+        f_imag = interp1d(sampled_radii, sampled_values.imag, kind='cubic', bounds_error=False, fill_value='extrapolate')
+
+        # Fill in unsampled points
         for i, (xi, yi, r) in enumerate(zip(x_int, y_int, radii)):
             if not mask[yi, xi]:
-                # Only interpolate if within the range of sampled data
                 if sampled_radii.min() <= r <= sampled_radii.max():
-                    interpolated_value = f_real(r) + 1j * f_imag(r)
-                    kspace_filled[yi, xi] = interpolated_value
-    
+                    kspace_filled[yi, xi] = f_real(r) + 1j * f_imag(r)
+
     return from_kspace(kspace_filled)
+
 
 def spline_interpolation_kspace(kspace_undersampled: np.ndarray, mask: np.ndarray, order: int = 3) -> np.ndarray:
     """Reconstruct image using spline interpolation in k-space.
@@ -339,7 +289,7 @@ def spline_interpolation_kspace(kspace_undersampled: np.ndarray, mask: np.ndarra
     return from_kspace(kspace_filled)
 
 def low_pass_filter_recon(kspace_undersampled: np.ndarray, mask: np.ndarray, sigma: float = 1.0) -> np.ndarray:
-    """Reconstruct image using zero-filling followed by Gaussian low-pass filtering.
+    """Reconstruct image by applying Gaussian low-pass filtering and transforming to image space.
     
     Args:
         kspace_undersampled: Undersampled k-space data.
@@ -545,6 +495,8 @@ for key, data in results.items():
     plt.show()
 
 # %% Analyze frequency response for Shepp-Logan with random sampling
+data = results['shepp_logan_radial']
+analyze_frequency_response(data['phantom'], data['recons'])
 data = results['shepp_logan_random']
 analyze_frequency_response(data['phantom'], data['recons'])
 
