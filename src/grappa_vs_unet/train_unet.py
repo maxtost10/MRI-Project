@@ -9,7 +9,7 @@ import h5py
 import matplotlib.pyplot as plt
 from typing import Tuple, Optional
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping, ModelSummary
 
 class MRIDataset(Dataset):
     """PyTorch dataset for MRI reconstruction."""
@@ -378,6 +378,7 @@ def train_model_lightning(
     
     # Callbacks
     callbacks = [
+        ModelSummary(max_depth=2),
         ModelCheckpoint(
             monitor='val_loss',
             dirpath='checkpoints',
