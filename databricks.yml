@@ -1,0 +1,19 @@
+# This is a Databricks asset bundle definition for MRI-Project.
+# The Databricks extension requires databricks.yml configuration file.
+# See https://docs.databricks.com/dev-tools/bundles/index.html for documentation.
+
+bundle:
+  name: MRI-Project
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-2365524109159931.11.azuredatabricks.net
+
+  ## Optionally, there could be 'staging' or 'prod' targets here.
+  #
+  # prod:
+  #   workspace:
+  #     host: https://adb-2365524109159931.11.azuredatabricks.net
