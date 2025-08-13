@@ -52,7 +52,7 @@ class MRIDataset(Dataset):
         return kspace_us_tensor, kspace_full_tensor, mask_tensor
 
 class AdaptiveUNet(nn.Module):
-    """U-Net with acceleration-factor-aware architecture."""
+    """U-Net with acceleration-factor-aware architecture and built-in data consistency."""
     
     def __init__(self, in_channels: int = 2, out_channels: int = 2, acceleration: int = 4):
         super(AdaptiveUNet, self).__init__()
@@ -104,7 +104,10 @@ class AdaptiveUNet(nn.Module):
             nn.ReLU(inplace=True)
         )
     
-    def forward(self, x):
+    def forward(self, x, mask):
+        # Store input for data consistency
+        input_kspace = x
+        
         # Encoder
         enc1 = self.enc1(x)
         enc2 = self.enc2(self.pool(enc1))
@@ -131,31 +134,15 @@ class AdaptiveUNet(nn.Module):
         dec1 = torch.cat([dec1, enc1], dim=1)
         dec1 = self.dec1(dec1)
         
-        return self.final(dec1)
-
-
-class DataConsistencyLayer(nn.Module):
-    """Enforce data consistency in k-space."""
-    
-    def forward(self, pred_kspace: torch.Tensor, 
-                undersampled_kspace: torch.Tensor, 
-                mask: torch.Tensor) -> torch.Tensor:
-        """
-        Replace predicted k-space values with acquired values where available.
+        # Get prediction
+        pred_kspace = self.final(dec1)
         
-        Args:
-            pred_kspace: Predicted k-space (B, 2, H, W) - real and imag channels
-            undersampled_kspace: Original undersampled k-space (B, 2, H, W)
-            mask: Sampling mask (B, H, W)
-            
-        Returns:
-            Data-consistent k-space (B, 2, H, W)
-        """
-        # Expand mask to match k-space dimensions
         mask_expanded = mask.unsqueeze(1).expand_as(pred_kspace)
-        
         # Replace predicted values with measured values where available
-        return pred_kspace * (1 - mask_expanded) + undersampled_kspace * mask_expanded
+        pred_kspace = pred_kspace * (1 - mask_expanded) + input_kspace * mask_expanded
+        
+        return pred_kspace
+
 
 class MRIReconstructionLightning(pl.LightningModule):
     """PyTorch Lightning module for MRI reconstruction."""
@@ -173,31 +160,17 @@ class MRIReconstructionLightning(pl.LightningModule):
         
         self.model = AdaptiveUNet(in_channels, out_channels, acceleration)
         
-        # Data consistency layer
-        self.dc_layer = DataConsistencyLayer()
-        
         # Loss
         self.criterion = nn.MSELoss()
         
-    def forward(self, x):
-        return self.model(x)
-    
-    def predict_with_dc(self, kspace_us: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        """Make prediction with data consistency applied."""
-        # Forward pass through U-Net
-        pred_kspace = self.model(kspace_us)
-        # Apply data consistency
-        pred_kspace_dc = self.dc_layer(pred_kspace, kspace_us, mask)
-        return pred_kspace_dc
+    def forward(self, x, mask):
+        return self.model(x, mask)
     
     def _shared_step(self, batch, stage: str):
         kspace_us, kspace_full, mask = batch
         
-        # Forward pass
-        pred_kspace = self.model(kspace_us)
-        
-        # Apply data consistency
-        pred_kspace = self.dc_layer(pred_kspace, kspace_us, mask)
+        # Forward pass with data consistency built-in (mask always passed)
+        pred_kspace = self.model(kspace_us, mask)
         
         # Compute loss
         loss = self.criterion(pred_kspace, kspace_full)
@@ -404,8 +377,8 @@ def visualize_predictions(model, data_module, trainer, num_samples=4):
     
     # Make predictions
     with torch.no_grad():        
-        # Prediction with data consistency
-        pred_kspace_dc = model.predict_with_dc(kspace_us, mask)
+        # Prediction with built-in data consistency (mask always passed)
+        pred_kspace_dc = model(kspace_us, mask)
     
     # Convert k-space to images for visualization
     def kspace_to_image(kspace_tensor) -> np.ndarray:
