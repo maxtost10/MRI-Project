@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.utils.data import Dataset, DataLoader
+import wandb
 import numpy as np
 from numpy.fft import ifft2, fftshift, ifftshift
 import h5py
@@ -468,6 +469,7 @@ def print_model_summary(model, trainer):
 if __name__ == "__main__":
     # Set random seed for reproducibility
     pl.seed_everything(42)
+    wandb.login(key="8709b844d342b1f107a01f58f5c666423f2f9656")
     
     # Train model
     model, trainer = train_model_lightning(
@@ -477,7 +479,7 @@ if __name__ == "__main__":
         learning_rate=1e-3,
         acceleration=4,
         gpus=1 if torch.cuda.is_available() else 0,
-        use_wandb=False,  # Set to True if you want to use Weights & Biases
+        use_wandb=True,  # Set to True if you want to use Weights & Biases
         project_name="mri-reconstruction",
         run_name="adaptive-unet-lightning"
     )
