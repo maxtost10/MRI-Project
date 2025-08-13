@@ -90,9 +90,6 @@ class AdaptiveUNet(nn.Module):
         
         # Pooling
         self.pool = nn.MaxPool2d(2)
-        
-        # Add acceleration-specific processing layer
-        self.accel_processor = AccelerationAwareLayer(64, acceleration)
     
     def conv_block(self, in_channels: int, out_channels: int, kernel_size: int = 3):
         """Convolutional block with adaptive kernel size."""
@@ -133,49 +130,8 @@ class AdaptiveUNet(nn.Module):
         dec1 = torch.cat([dec1, enc1], dim=1)
         dec1 = self.dec1(dec1)
         
-        # Apply acceleration-aware processing
-        dec1 = self.accel_processor(dec1)
-        
         return self.final(dec1)
 
-class AccelerationAwareLayer(nn.Module):
-    """Layer that explicitly handles acceleration patterns."""
-    
-    def __init__(self, channels: int, acceleration: int):
-        super().__init__()
-        self.acceleration = acceleration
-        
-        # Create specialized convolutions for handling undersampling patterns
-        # Vertical kernel to handle missing k-space lines
-        self.vertical_conv = nn.Conv2d(
-            channels, channels, 
-            kernel_size=(acceleration * 2 - 1, 1), 
-            padding=(acceleration - 1, 0),
-            groups=channels  # Depthwise convolution
-        )
-        
-        # Horizontal kernel for spatial consistency
-        self.horizontal_conv = nn.Conv2d(
-            channels, channels,
-            kernel_size=(1, 5),
-            padding=(0, 2),
-            groups=channels
-        )
-        
-        # Combine features
-        self.combine = nn.Conv2d(channels * 2, channels, kernel_size=1)
-        
-    def forward(self, x):
-        # Apply specialized convolutions
-        vertical_features = self.vertical_conv(x)
-        horizontal_features = self.horizontal_conv(x)
-        
-        # Combine and refine
-        combined = torch.cat([vertical_features, horizontal_features], dim=1)
-        output = self.combine(combined)
-        
-        # Residual connection
-        return output + x
 
 class DataConsistencyLayer(nn.Module):
     """Enforce data consistency in k-space."""
@@ -192,7 +148,7 @@ class DataConsistencyLayer(nn.Module):
             mask: Sampling mask (B, H, W)
             
         Returns:
-            Data-consistent k-space
+            Data-consistent k-space (B, 2, H, W)
         """
         # Expand mask to match k-space dimensions
         mask_expanded = mask.unsqueeze(1).expand_as(pred_kspace)
@@ -210,17 +166,11 @@ class MRIReconstructionLightning(pl.LightningModule):
         acceleration: int = 4,
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-5,
-        use_adaptive_unet: bool = True
     ):
         super().__init__()
         self.save_hyperparameters()
         
-        # Model
-        if use_adaptive_unet:
-            self.model = AdaptiveUNet(in_channels, out_channels, acceleration)
-        else:
-            # You can add the standard UNet here if needed
-            raise NotImplementedError("Standard UNet not included in this version")
+        self.model = AdaptiveUNet(in_channels, out_channels, acceleration)
         
         # Data consistency layer
         self.dc_layer = DataConsistencyLayer()
@@ -231,7 +181,7 @@ class MRIReconstructionLightning(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
     
-    def _shared_step(self, batch, batch_idx, stage: str):
+    def _shared_step(self, batch, stage: str):
         kspace_us, kspace_full, mask = batch
         
         # Forward pass
@@ -250,19 +200,18 @@ class MRIReconstructionLightning(pl.LightningModule):
         if stage == 'val':
             # Compute PSNR
             mse = torch.mean((pred_kspace - kspace_full) ** 2)
-            psnr = 20 * torch.log10(torch.tensor(1.0) / torch.sqrt(mse))
-            self.log('val_psnr', psnr, on_step=False, on_epoch=True, prog_bar=True)
+            self.log('val_mse', mse, on_step=False, on_epoch=True, prog_bar=True)
         
         return loss
     
     def training_step(self, batch, batch_idx):
-        return self._shared_step(batch, batch_idx, 'train')
+        return self._shared_step(batch, 'train')
     
     def validation_step(self, batch, batch_idx):
-        return self._shared_step(batch, batch_idx, 'val')
+        return self._shared_step(batch, 'val')
     
     def test_step(self, batch, batch_idx):
-        return self._shared_step(batch, batch_idx, 'test')
+        return self._shared_step(batch, 'test')
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
@@ -276,7 +225,6 @@ class MRIReconstructionLightning(pl.LightningModule):
             mode='min',
             factor=0.5,
             patience=5,
-            verbose=True
         )
         
         return {
@@ -373,7 +321,6 @@ def train_model_lightning(
         out_channels=2,
         acceleration=acceleration,
         learning_rate=learning_rate,
-        use_adaptive_unet=True
     )
     
     # Callbacks
@@ -416,7 +363,7 @@ def train_model_lightning(
         log_every_n_steps=10,
         gradient_clip_val=1.0,
         deterministic=True,
-        precision=16 if gpus > 0 else 32  # Mixed precision if using GPU
+        precision='16-mixed' if gpus > 0 else 32  # Mixed precision if using GPU
     )
     
     # Train
@@ -435,7 +382,7 @@ if __name__ == "__main__":
     # Train model
     model, trainer = train_model_lightning(
         dataset_path='./mri_dataset.h5',
-        num_epochs=50,
+        num_epochs=3,
         batch_size=8,
         learning_rate=1e-3,
         acceleration=4,
@@ -452,3 +399,4 @@ if __name__ == "__main__":
     }, './unet_model_lightning.pth')
     
     print("Training completed!")
+# %%
