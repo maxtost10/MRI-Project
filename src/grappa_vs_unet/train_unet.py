@@ -441,15 +441,15 @@ def visualize_predictions(model, data_module, trainer, num_samples=4):
         axes[i, 2].axis('off')
         
         # Difference
-        diff = torch.abs(pred_images[i] - target_images[i])
+        diff = np.abs(pred_images[i] - target_images[i])
         im = axes[i, 3].imshow(diff, cmap='hot')
         axes[i, 3].set_title(f'Absolute Difference')
         axes[i, 3].axis('off')
         plt.colorbar(im, ax=axes[i, 3], fraction=0.046, pad=0.04)
         
         # Calculate metrics for this sample
-        mse = torch.mean((pred_images[i] - target_images[i]) ** 2).item()
-        psnr = 10 * torch.log10(torch.max(target_images[i]) ** 2 / (mse + 1e-8)).item()
+        mse = np.mean((pred_images[i] - target_images[i]) ** 2)
+        psnr = 10 * np.log10(np.max(target_images[i]) ** 2 / (mse + 1e-8))
         print(f"Sample {i+1}: MSE = {mse:.6f}, PSNR = {psnr:.2f} dB")
     
     plt.tight_layout()
