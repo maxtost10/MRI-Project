@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+from numpy.fft import ifft2, fftshift, ifftshift
 import h5py
 import matplotlib.pyplot as plt
 from typing import Tuple, Optional
@@ -180,6 +181,14 @@ class MRIReconstructionLightning(pl.LightningModule):
         
     def forward(self, x):
         return self.model(x)
+    
+    def predict_with_dc(self, kspace_us: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """Make prediction with data consistency applied."""
+        # Forward pass through U-Net
+        pred_kspace = self.model(kspace_us)
+        # Apply data consistency
+        pred_kspace_dc = self.dc_layer(pred_kspace, kspace_us, mask)
+        return pred_kspace_dc
     
     def _shared_step(self, batch, stage: str):
         kspace_us, kspace_full, mask = batch
@@ -394,23 +403,20 @@ def visualize_predictions(model, data_module, trainer, num_samples=4):
     mask = mask.to(device)
     
     # Make predictions
-    with torch.no_grad():
-        pred_kspace = model.model(kspace_us)
-        pred_kspace = model.dc_layer(pred_kspace, kspace_us, mask)
+    with torch.no_grad():        
+        # Prediction with data consistency
+        pred_kspace_dc = model.predict_with_dc(kspace_us, mask)
     
     # Convert k-space to images for visualization
-    def kspace_to_image(kspace_tensor):
-        """Convert k-space (real, imag) to magnitude image."""
-        # Combine real and imaginary parts
+    def kspace_to_image(kspace_tensor) -> np.ndarray:
+        """Reconstruct image from k-space using inverse 2D FFT."""
         complex_kspace = torch.complex(kspace_tensor[:, 0], kspace_tensor[:, 1])
         # Inverse FFT to get image
-        image = torch.fft.ifft2(torch.fft.ifftshift(complex_kspace, dim=(-2, -1)))
-        # Take magnitude
-        return torch.abs(image)
+        return np.abs(fftshift(ifft2(ifftshift(complex_kspace))))
     
     # Convert to images
     target_images = kspace_to_image(kspace_full.cpu())
-    pred_images = kspace_to_image(pred_kspace.cpu())
+    pred_images = kspace_to_image(pred_kspace_dc.cpu())
     input_images = kspace_to_image(kspace_us.cpu())
     
     # Plot results
