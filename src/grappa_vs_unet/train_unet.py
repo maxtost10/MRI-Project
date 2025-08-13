@@ -374,6 +374,117 @@ def train_model_lightning(
     
     return model, trainer
 
+def visualize_predictions(model, data_module, trainer, num_samples=4):
+    """Visualize model predictions vs ground truth."""
+    
+    # Set model to evaluation mode
+    model.eval()
+    
+    # Get test dataloader
+    test_loader = data_module.test_dataloader()
+    
+    # Get a batch of test data
+    batch = next(iter(test_loader))
+    kspace_us, kspace_full, mask = batch
+    
+    # Move to device if using GPU
+    device = next(model.parameters()).device
+    kspace_us = kspace_us.to(device)
+    kspace_full = kspace_full.to(device)
+    mask = mask.to(device)
+    
+    # Make predictions
+    with torch.no_grad():
+        pred_kspace = model.model(kspace_us)
+        pred_kspace = model.dc_layer(pred_kspace, kspace_us, mask)
+    
+    # Convert k-space to images for visualization
+    def kspace_to_image(kspace_tensor):
+        """Convert k-space (real, imag) to magnitude image."""
+        # Combine real and imaginary parts
+        complex_kspace = torch.complex(kspace_tensor[:, 0], kspace_tensor[:, 1])
+        # Inverse FFT to get image
+        image = torch.fft.ifft2(torch.fft.ifftshift(complex_kspace, dim=(-2, -1)))
+        # Take magnitude
+        return torch.abs(image)
+    
+    # Convert to images
+    target_images = kspace_to_image(kspace_full.cpu())
+    pred_images = kspace_to_image(pred_kspace.cpu())
+    input_images = kspace_to_image(kspace_us.cpu())
+    
+    # Plot results
+    _, axes = plt.subplots(num_samples, 4, figsize=(16, 4*num_samples))
+    if num_samples == 1:
+        axes = axes.reshape(1, -1)
+    
+    for i in range(min(num_samples, kspace_us.shape[0])):
+        # Input (undersampled)
+        axes[i, 0].imshow(input_images[i], cmap='gray')
+        axes[i, 0].set_title(f'Input (Undersampled)')
+        axes[i, 0].axis('off')
+        
+        # Prediction
+        axes[i, 1].imshow(pred_images[i], cmap='gray')
+        axes[i, 1].set_title(f'Prediction')
+        axes[i, 1].axis('off')
+        
+        # Ground Truth
+        axes[i, 2].imshow(target_images[i], cmap='gray')
+        axes[i, 2].set_title(f'Ground Truth')
+        axes[i, 2].axis('off')
+        
+        # Difference
+        diff = torch.abs(pred_images[i] - target_images[i])
+        im = axes[i, 3].imshow(diff, cmap='hot')
+        axes[i, 3].set_title(f'Absolute Difference')
+        axes[i, 3].axis('off')
+        plt.colorbar(im, ax=axes[i, 3], fraction=0.046, pad=0.04)
+        
+        # Calculate metrics for this sample
+        mse = torch.mean((pred_images[i] - target_images[i]) ** 2).item()
+        psnr = 10 * torch.log10(torch.max(target_images[i]) ** 2 / (mse + 1e-8)).item()
+        print(f"Sample {i+1}: MSE = {mse:.6f}, PSNR = {psnr:.2f} dB")
+    
+    plt.tight_layout()
+    
+    # Save the figure before showing
+    plt.savefig('mri_predictions.png', dpi=300, bbox_inches='tight', facecolor='white')
+    
+    plt.show()
+    
+    print(f"📊 Visualization saved as 'mri_predictions.png'")
+    
+    return pred_images, target_images, input_images
+
+def print_model_summary(model, trainer):
+    """Print training summary and final metrics."""
+    
+    print("\n" + "="*50)
+    print("TRAINING SUMMARY")
+    print("="*50)
+    
+    # Get final metrics from trainer
+    if trainer.callback_metrics:
+        print("\nFinal Metrics:")
+        for key, value in trainer.callback_metrics.items():
+            if isinstance(value, torch.Tensor):
+                print(f"  {key}: {value.item():.6f}")
+            else:
+                print(f"  {key}: {value}")
+    
+    # Model info
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    print(f"\nModel Information:")
+    print(f"  Total parameters: {total_params:,}")
+    print(f"  Trainable parameters: {trainable_params:,}")
+    print(f"  Acceleration factor: {model.hparams.acceleration}")
+    print(f"  Learning rate: {model.hparams.learning_rate}")
+    
+    print("\n" + "="*50)
+
 # %%
 if __name__ == "__main__":
     # Set random seed for reproducibility
@@ -392,11 +503,28 @@ if __name__ == "__main__":
         run_name="adaptive-unet-lightning"
     )
     
+    # Print training summary
+    print_model_summary(model, trainer)
+    
+    # Create data module for visualization
+    data_module = MRIDataModule(
+        dataset_path='./mri_dataset.h5',
+        batch_size=8,
+        num_workers=4
+    )
+    data_module.setup('test')
+    
+    # Visualize predictions
+    print("\nGenerating predictions visualization...")
+    pred_images, target_images, input_images = visualize_predictions(
+        model, data_module, trainer, num_samples=4
+    )
+    
     # Save final model in standard PyTorch format for compatibility
     torch.save({
         'model_state_dict': model.model.state_dict(),
         'hparams': model.hparams
     }, './unet_model_lightning.pth')
     
-    print("Training completed!")
+    print("\nTraining completed! Model saved as 'unet_model_lightning.pth'")
 # %%
