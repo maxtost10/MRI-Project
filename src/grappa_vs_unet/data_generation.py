@@ -202,9 +202,9 @@ def visualize_samples(dataset_path: str, num_samples: int = 4):
 if __name__ == "__main__":
     # Generate dataset
     generate_dataset(
-        num_train=2000,
-        num_test=200,
-        size=256,
+        num_train=400,
+        num_test=40,
+        size=128,
         acceleration=4,
         save_path='./mri_dataset.h5'
     )
