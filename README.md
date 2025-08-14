@@ -45,3 +45,7 @@ This repository implements and compares MRI reconstruction techniques from class
 3. **Deep Learning**: Dive into [grappa_vs_unet](src/grappa_vs_unet/) for modern reconstruction techniques
 
 Each folder contains detailed README files with specific implementation details, usage instructions, and result interpretations.
+
+## Future Ideas
+- Add another U-Net that learns to reconstruct the image in image space with the real image as target. I feel like there are constraints in both spaces (Image, and k-space) that complement each other
+- Make a reinforcement learning project, where the actor learns to choose which k-space lines to sample next to maximise the psnr.
