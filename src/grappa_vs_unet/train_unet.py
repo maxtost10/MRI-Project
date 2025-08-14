@@ -482,8 +482,8 @@ def print_model_summary(model, trainer):
 def load_model(model_path: str, device: str = 'cuda' if torch.cuda.is_available() else 'cpu'):
     """Load the saved model."""
     
-    # Load the saved model data
-    checkpoint = torch.load(model_path, map_location=device)
+    # Load the saved model data with weights_only=False to handle Lightning's AttributeDict
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     # Extract hyperparameters
     hparams = checkpoint['hparams']
@@ -520,14 +520,14 @@ if __name__ == "__main__":
         # Train model
         model, trainer = train_model_lightning(
             dataset_path='./mri_dataset.h5',
-            num_epochs=50,
+            num_epochs=10,
             batch_size=8,
             learning_rate=1e-3,
             acceleration=4,
             gpus=1 if torch.cuda.is_available() else 0,
             use_wandb=True,
             project_name="mri-reconstruction",
-            run_name="adaptive-unet-long_training",
+            run_name="adaptive-unet",
             val_split=0.1
         )
 
@@ -538,11 +538,11 @@ if __name__ == "__main__":
         torch.save({
             'model_state_dict': model.model.state_dict(),
             'hparams': model.hparams
-        }, './adaptive-unet-long_training.pth')
+        }, './adaptive-unet.pth')
 
-        print("\nTraining completed! Model saved as 'adaptive-unet-long_training.pth'")
+        print("\nTraining completed! Model saved as 'adaptive-unet.pth'")
     else:
-        model = load_model("adaptive-unet-long_training.pth")
+        model, _ = load_model("adaptive-unet.pth")
     
     # Create data module for visualization
     data_module = MRIDataModule(
