@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 import wandb
 import numpy as np
 from numpy.fft import ifft2, fftshift, ifftshift
@@ -233,18 +233,29 @@ class MRIDataModule(pl.LightningDataModule):
         dataset_path: str,
         batch_size: int = 8,
         num_workers: int = 4,
-        pin_memory: bool = True
+        pin_memory: bool = True,
+        val_split: float = 0.2
     ):
         super().__init__()
         self.dataset_path = dataset_path
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
+        self.val_split = val_split
     
     def setup(self, stage: Optional[str] = None):
         if stage == 'fit' or stage is None:
-            self.train_dataset = MRIDataset(self.dataset_path, mode='train')
-            self.val_dataset = MRIDataset(self.dataset_path, mode='test')
+            full_train_dataset = MRIDataset(self.dataset_path, mode='train')
+            train_size = int((1 - self.val_split) * len(full_train_dataset))
+            val_size = len(full_train_dataset) - train_size
+            
+            self.train_dataset, self.val_dataset = random_split(
+                full_train_dataset, 
+                [train_size, val_size],
+                generator=torch.Generator().manual_seed(42)  # For reproducible splits
+            )
+            
+            print(f"Dataset split: {train_size} train, {val_size} validation")
         
         if stage == 'test' or stage is None:
             self.test_dataset = MRIDataset(self.dataset_path, mode='test')
@@ -287,7 +298,8 @@ def train_model_lightning(
     gpus: int = 1,
     use_wandb: bool = True,
     project_name: str = "mri-reconstruction",
-    run_name: str = "adaptive-unet-lightning"
+    run_name: str = "adaptive-unet-lightning",
+    val_split: float = 0.2
 ):
     """Train model using PyTorch Lightning."""
     
@@ -295,7 +307,8 @@ def train_model_lightning(
     data_module = MRIDataModule(
         dataset_path=dataset_path,
         batch_size=batch_size,
-        num_workers=4
+        num_workers=4,
+        val_split=val_split
     )
     
     # Create model
@@ -357,7 +370,7 @@ def train_model_lightning(
     
     return model, trainer
 
-def visualize_predictions(model, data_module, trainer, num_samples=4):
+def visualize_predictions(model, data_module, num_samples=4):
     """Visualize model predictions vs ground truth."""
     
     # Set model to evaluation mode
@@ -465,47 +478,85 @@ def print_model_summary(model, trainer):
     
     print("\n" + "="*50)
 
+
+def load_model(model_path: str, device: str = 'cuda' if torch.cuda.is_available() else 'cpu'):
+    """Load the saved model."""
+    
+    # Load the saved model data
+    checkpoint = torch.load(model_path, map_location=device)
+    
+    # Extract hyperparameters
+    hparams = checkpoint['hparams']
+    
+    # Create model instance
+    model = AdaptiveUNet(
+        in_channels=hparams.get('in_channels', 2),
+        out_channels=hparams.get('out_channels', 2),
+        acceleration=hparams.get('acceleration', 4)
+    )
+    
+    # Load the state dict
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Move to device and set to eval mode
+    model.to(device)
+    model.eval()
+    
+    print(f"Model loaded successfully from {model_path}")
+    print(f"Device: {device}")
+    print(f"Acceleration factor: {hparams.get('acceleration', 4)}")
+    
+    return model, hparams
+
+
 # %%
 if __name__ == "__main__":
     # Set random seed for reproducibility
+    train = False
     pl.seed_everything(42)
     wandb.login(key="8709b844d342b1f107a01f58f5c666423f2f9656")
     
-    # Train model
-    model, trainer = train_model_lightning(
-        dataset_path='./mri_dataset.h5',
-        num_epochs=3,
-        batch_size=8,
-        learning_rate=1e-3,
-        acceleration=4,
-        gpus=1 if torch.cuda.is_available() else 0,
-        use_wandb=True,  # Set to True if you want to use Weights & Biases
-        project_name="mri-reconstruction",
-        run_name="adaptive-unet-lightning"
-    )
-    
-    # Print training summary
-    print_model_summary(model, trainer)
+    if train:
+        # Train model
+        model, trainer = train_model_lightning(
+            dataset_path='./mri_dataset.h5',
+            num_epochs=50,
+            batch_size=8,
+            learning_rate=1e-3,
+            acceleration=4,
+            gpus=1 if torch.cuda.is_available() else 0,
+            use_wandb=True,
+            project_name="mri-reconstruction",
+            run_name="adaptive-unet-long_training",
+            val_split=0.1
+        )
+
+        # Print training summary
+        print_model_summary(model, trainer)
+
+        # Save final model in standard PyTorch format for compatibility
+        torch.save({
+            'model_state_dict': model.model.state_dict(),
+            'hparams': model.hparams
+        }, './adaptive-unet-long_training.pth')
+
+        print("\nTraining completed! Model saved as 'adaptive-unet-long_training.pth'")
+    else:
+        model = load_model("adaptive-unet-long_training.pth")
     
     # Create data module for visualization
     data_module = MRIDataModule(
         dataset_path='./mri_dataset.h5',
-        batch_size=8,
-        num_workers=4
+        batch_size=16,
+        num_workers=8,
+        val_split=0.1
     )
     data_module.setup('test')
     
     # Visualize predictions
     print("\nGenerating predictions visualization...")
     pred_images, target_images, input_images = visualize_predictions(
-        model, data_module, trainer, num_samples=4
+        model, data_module, num_samples=4
     )
     
-    # Save final model in standard PyTorch format for compatibility
-    torch.save({
-        'model_state_dict': model.model.state_dict(),
-        'hparams': model.hparams
-    }, './unet_model_lightning.pth')
-    
-    print("\nTraining completed! Model saved as 'unet_model_lightning.pth'")
 # %%
