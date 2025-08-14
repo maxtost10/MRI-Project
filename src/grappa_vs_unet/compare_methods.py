@@ -10,10 +10,10 @@ from tqdm import tqdm
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 import pandas as pd
+from numpy.fft import ifft2, fftshift, ifftshift
 
-# Import necessary functions and classes
-from train_unet import UNet, DataConsistencyLayer
-from data_generation import from_kspace, to_kspace
+# Import from your existing script
+from train_unet import AdaptiveUNet
 
 def complex_to_tensor(complex_array: np.ndarray) -> torch.Tensor:
     """Convert complex numpy array to torch tensor with real/imag channels."""
@@ -25,6 +25,10 @@ def complex_to_tensor(complex_array: np.ndarray) -> torch.Tensor:
 def tensor_to_complex(tensor: torch.Tensor) -> np.ndarray:
     """Convert torch tensor with real/imag channels to complex numpy array."""
     return tensor[0].numpy() + 1j * tensor[1].numpy()
+
+def kspace_to_image(kspace: np.ndarray) -> np.ndarray:
+    """Reconstruct image from k-space using inverse 2D FFT."""
+    return np.abs(fftshift(ifft2(ifftshift(kspace))))
 
 class GRAPPA:
     """GRAPPA reconstruction for single-coil data (simplified version)."""
@@ -137,13 +141,19 @@ def compare_methods(
     ):
     """Compare U-Net and GRAPPA reconstruction methods."""
     
-    # Load U-Net model
-    print("Loading U-Net model...")
-    model = UNet(in_channels=2, out_channels=2).to(device)
-    checkpoint = torch.load(model_path, map_location=device)
+    # Load model
+    print("Loading model...")
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+    hparams = checkpoint['hparams']
+    
+    model = AdaptiveUNet(
+        in_channels=hparams.get('in_channels', 2),
+        out_channels=hparams.get('out_channels', 2),
+        acceleration=hparams.get('acceleration', 4)
+    )
     model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(device)
     model.eval()
-    dc_layer = DataConsistencyLayer()
     
     # Initialize results storage
     results = {
@@ -161,16 +171,15 @@ def compare_methods(
         # Process samples
         for idx in tqdm(range(min(num_samples, test_data['phantoms'].shape[0])), desc="Processing samples"):
             # Load data
-            phantom = test_data['phantoms'][idx]
             kspace_full = test_data['kspace_full'][idx]
             kspace_undersampled = test_data['kspace_undersampled'][idx]
             mask = test_data['masks'][idx]
             
             # Ground truth reconstruction
-            gt_image = from_kspace(kspace_full)
+            gt_image = kspace_to_image(kspace_full)
             
             # Zero-filled reconstruction
-            zerofilled_image = from_kspace(kspace_undersampled)
+            zerofilled_image = kspace_to_image(kspace_undersampled)
             zerofilled_metrics = evaluate_reconstruction(gt_image, zerofilled_image)
             
             results['sample_idx'].append(idx)
@@ -184,11 +193,9 @@ def compare_methods(
                 kspace_tensor = complex_to_tensor(kspace_undersampled).unsqueeze(0).to(device)
                 mask_tensor = torch.from_numpy(mask.astype(np.float32)).unsqueeze(0).to(device)
                 
-                pred_kspace = model(kspace_tensor)
-                pred_kspace = dc_layer(pred_kspace, kspace_tensor, mask_tensor)
-                
+                pred_kspace = model(kspace_tensor, mask_tensor)
                 pred_kspace_np = tensor_to_complex(pred_kspace[0].cpu())
-                unet_image = from_kspace(pred_kspace_np)
+                unet_image = kspace_to_image(pred_kspace_np)
             
             unet_metrics = evaluate_reconstruction(gt_image, unet_image)
             
@@ -203,7 +210,7 @@ def compare_methods(
                 grappa = GRAPPA(kernel_size=(5, 5))
                 grappa.calibrate(kspace_undersampled, mask)
                 kspace_grappa = grappa.reconstruct(kspace_undersampled, mask)
-                grappa_image = from_kspace(kspace_grappa)
+                grappa_image = kspace_to_image(kspace_grappa)
                 
                 grappa_metrics = evaluate_reconstruction(gt_image, grappa_image)
                 
@@ -223,7 +230,7 @@ def compare_methods(
             
             # Visualize first few samples
             if idx < 5:
-                fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+                _, axes = plt.subplots(2, 4, figsize=(16, 8))
                 
                 # Images
                 axes[0, 0].imshow(gt_image, cmap='gray')
@@ -308,7 +315,7 @@ if __name__ == "__main__":
     # Run comparison
     results = compare_methods(
         dataset_path='./mri_dataset.h5',
-        model_path='./unet_model.pth',
+        model_path='./adaptive-unet.pth',
         num_samples=20
     )
     
@@ -320,3 +327,5 @@ if __name__ == "__main__":
     
     print(f"U-Net improvement: {unet_psnr - zero_filled_psnr:.2f} dB")
     print(f"GRAPPA improvement: {grappa_psnr - zero_filled_psnr:.2f} dB")
+
+# %%
