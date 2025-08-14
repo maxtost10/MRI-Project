@@ -1,3 +1,4 @@
+# %%
 import numpy as np
 from numpy.fft import fft2, ifft2, fftshift, ifftshift
 import matplotlib.pyplot as plt
@@ -128,4 +129,6 @@ axes[1, 1].imshow(np.abs(phantom - zero_filled_recon), cmap='hot')
 axes[1, 1].set_title('Error Map')
 
 plt.tight_layout()
+plt.savefig('first_reconstruction.png', dpi=300, bbox_inches='tight', facecolor='white')
 plt.show()
+# COMMAND ----------

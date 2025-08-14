@@ -1,72 +1,36 @@
-# First reconstruction
-A small script that creates a shepp logan phantom, transforms it to k-space, removes random higher $k_y$-lines and transforms it back to the image space.
+# First Reconstruction: Introduction to MRI Undersampling
 
-# Functions
+A foundational script demonstrating the basic principles of MRI reconstruction from undersampled k-space data using a simple Shepp-Logan phantom.
 
-## create_shepp_logan_phantom(size: int=256):
-Creates a square of black background with two concentric circles. The inner one is less bright than the outer one.
+## Concept
 
-## to_kspace(image: np.array)
-Applies the 2d fast fourier transform and shifts the frequencies such that frequency=0 is at the center of the transform.
+This implementation illustrates the fundamental challenge in accelerated MRI: when k-space lines are randomly omitted to speed up acquisition, the resulting zero-filled reconstruction suffers from characteristic artifacts. The script creates a controlled environment to observe these effects using synthetic data.
 
-## from_kspace(kspace: np.array)
-Applies the 2d inverse fast fourier transform, assuming that frequency=0 is at the center of the k-space data.
+## Approach
 
-## create_random_mask(shape: array (2d), acceleration: int=4)
-Creates a mask that is supposed to mimic undersampling. The mask is always the same for same y-values when an x is chosen. For x-values, 8% in the center are set to 1 (which means that this region would be scanned) and from the outside region, 1/acceleration (=25% for acceleration=4) x values will be set to 1 randomly.
+The workflow follows the basic MRI reconstruction pipeline:
+1. **Phantom Creation**: Simple two-circle Shepp-Logan phantom as ground truth
+2. **k-space Transformation**: Convert image to frequency domain via 2D FFT
+3. **Undersampling Simulation**: Remove random k-space lines while preserving central region (mimicking clinical protocols)
+4. **Zero-filled Reconstruction**: Direct inverse FFT without gap-filling
 
-# Example Use
+## Key Observations
 
-## Create Synthetic Data
-```python
-phantom = create_shepp_logan_phantom()
+![First Reconstruction Results](first_reconstruction.png)
 
-plt.figure(figsize=(10, 5))
-plt.subplot(121)
-plt.imshow(phantom, cmap='gray')
-plt.title('Original Phantom')
-plt.colorbar()
-```
+The visualization reveals fundamental undersampling artifacts:
 
-## Transform to k-space
-```python
-kspace = to_kspace(phantom)
+**Sampling Pattern**: The mask shows random line sampling with a densely sampled center region, reflecting clinical MRI protocols where low frequencies (center) are crucial for image contrast.
 
-plt.figure(figsize=(10, 5))
-plt.subplot(122)
-plt.imshow(np.log(np.abs(kspace) + 1e-9), cmap='gray')
-plt.title('K-Space (log magnitude)')
-plt.colorbar()
-plt.show()
-```
+**Artifact Characteristics**: 
+- **Streaking artifacts**: Horizontal striping patterns across the entire image due to missing k-space lines
+- **Noise amplification**: Background regions show increased noise compared to the original
+- **Structure preservation**: Despite artifacts, the main phantom geometry remains recognizable
 
-## Apply random mask to higher frequencies
-```python
-mask = create_random_mask(kspace.shape, acceleration=3)
-undersampled_kspace = kspace * mask
-zero_filled_recon = from_kspace(undersampled_kspace)
-```
+**Error Distribution**: The error map highlights that artifacts are distributed throughout the image, not localized to specific regions. This global nature of undersampling artifacts motivates the need for sophisticated reconstruction algorithms.
 
-## Analyse reconstruction
-```python
-mse = np.mean((phantom - zero_filled_recon)**2)
-psnr = 10 * np.log10(1.0 / mse)
-print(f'PSNR: {psnr:.2f} dB')
+## Clinical Relevance
 
-fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+This simple example demonstrates why direct zero-filling is insufficient for clinical MRI acceleration. The pronounced streaking artifacts would obscure diagnostic features in real images, necessitating advanced reconstruction methods like parallel imaging, compressed sensing, or deep learning approaches explored elsewhere in this repository.
 
-axes[0, 0].imshow(phantom, cmap='gray')
-axes[0, 0].set_title('Original')
-
-axes[0, 1].imshow(mask, cmap='gray', aspect='auto')
-axes[0, 1].set_title('Sampling Pattern')
-
-axes[1, 0].imshow(zero_filled_recon, cmap='gray')
-axes[1, 0].set_title('Zero-Filled Reconstruction')
-
-axes[1, 1].imshow(np.abs(phantom - zero_filled_recon), cmap='hot')
-axes[1, 1].set_title('Error Map')
-
-plt.tight_layout()
-plt.show()
-```
+The preserved central k-space region ensures that basic image contrast is maintained, illustrating why clinical protocols always fully sample the k-space center even under aggressive acceleration.
