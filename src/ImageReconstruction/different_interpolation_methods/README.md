@@ -39,7 +39,6 @@ Real and imaginary parts are interpolated separately along the frequency-encodin
 Interpolation is performed along radial spokes in k-space using **linear interpolation**. For each angle:
 - Sampled complex values along the radial line are extracted.
 - 1D linear interpolation is applied to fill missing samples.
-- Only values within the interpolation domain are updated.
 
 #### d. **Low-Pass Filtering**
 
