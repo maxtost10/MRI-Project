@@ -80,16 +80,6 @@ weights = np.linalg.lstsq(sources_combined, targets, rcond=None)[0]
 
 Based on evaluation across 20 test samples, the following performance metrics were obtained:
 
-| Method | PSNR (dB) | SSIM | RMSE |
-|--------|-----------|------|------|
-| **Zero-filled** | 19.63 ± 0.74 | 0.635 ± 0.030 | 0.105 ± 0.008 |
-| **U-Net** | 20.63 ± 1.47 | 0.733 ± 0.024 | 0.095 ± 0.015 |
-| **GRAPPA** | 19.42 ± 0.79 | 0.640 ± 0.032 | 0.107 ± 0.009 |
-
-**Performance Improvements over Zero-filled:**
-- **U-Net**: +1.00 dB PSNR improvement
-- **GRAPPA**: -0.21 dB PSNR (slight degradation)
-
 ![Reconstruction Performance Comparison](performance_comparison.png)
 
 ### Qualitative Analysis
