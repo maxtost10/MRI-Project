@@ -11,8 +11,8 @@ This repository implements and compares MRI reconstruction techniques from class
 │   │   ├── Plots/
 │   │   ├── compare_methods.py
 │   │   ├── data_generation.py
-│   │   ├── README.md
-│   │   └── train_unet.py
+│   │   ├── train_unet.py
+│   │   └── README.md
 │   ├── ImageReconstruction/
 │   │   ├── __pycache__/
 │   │   ├── different_interpolation_methods/
