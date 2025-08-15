@@ -80,15 +80,15 @@ weights = np.linalg.lstsq(sources_combined, targets, rcond=None)[0]
 
 Based on evaluation across 20 test samples, the following performance metrics were obtained:
 
-![Reconstruction Performance Comparison](performance_comparison.png)
+![Reconstruction Performance Comparison](Plots/performance_comparison.png)
 
 ### Qualitative Analysis
 
-![Sample Comparison 0](comparison_sample_0.png)
+![Sample Comparison 0](Plots/comparison_sample_0.png)
 
-![Sample Comparison 1](comparison_sample_1.png)
+![Sample Comparison 1](Plots/comparison_sample_1.png)
 
-![Sample Comparison 2](comparison_sample_2.png)
+![Sample Comparison 2](Plots/comparison_sample_2.png)
 
 The comparative visualizations reveal several key insights across different phantom configurations:
 

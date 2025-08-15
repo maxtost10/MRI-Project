@@ -8,14 +8,9 @@ This repository implements and compares MRI reconstruction techniques from class
 ├── lightning_logs/
 ├── src/
 │   ├── grappa_vs_unet/
-│   │   ├── lightning_logs/
+│   │   ├── Plots/
 │   │   ├── compare_methods.py
-│   │   ├── comparison_sample_0.png
-│   │   ├── comparison_sample_1.png
-│   │   ├── comparison_sample_2.png
 │   │   ├── data_generation.py
-│   │   ├── mri_dataset.h5
-│   │   ├── performance_comparison.png
 │   │   ├── README.md
 │   │   └── train_unet.py
 │   ├── ImageReconstruction/
