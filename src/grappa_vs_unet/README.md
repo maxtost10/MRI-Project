@@ -100,9 +100,8 @@ The comparative visualizations reveal several key insights across different phan
 
 #### GRAPPA Characteristics:
 1. **Classical approach limitations**: Single-coil GRAPPA shows minimal improvement over zero-filled
-2. **Calibration sensitivity**: Performance depends heavily on ACS region quality and extent
 3. **Linear interpolation constraints**: Limited by linear assumption in k-space relationships
-4. **Computational efficiency**: Faster reconstruction compared to deep learning approach
+4. **Computational efficiency**: Faster reconstruction compared to deep learning approach, also no expensive training needed
 
 #### Error Pattern Analysis:
 From the error maps (shown in red/yellow heatmaps), several patterns emerge:
