@@ -238,16 +238,16 @@ def compare_methods(
                 axes[0, 0].axis('off')
                 
                 axes[0, 1].imshow(zerofilled_image, cmap='gray')
-                axes[0, 1].set_title(f'Zero-filled\nPSNR: {zerofilled_metrics["PSNR"]:.2f}')
+                axes[0, 1].set_title(f'Zero-filled\nPSNR: {zerofilled_metrics["PSNR"]:.2f}\nSSIM: {zerofilled_metrics["SSIM"]:.2f}')
                 axes[0, 1].axis('off')
                 
                 axes[0, 2].imshow(unet_image, cmap='gray')
-                axes[0, 2].set_title(f'U-Net\nPSNR: {unet_metrics["PSNR"]:.2f}')
+                axes[0, 2].set_title(f'U-Net\nPSNR: {unet_metrics["PSNR"]:.2f}\nSSIM: {unet_metrics["SSIM"]:.2f}')
                 axes[0, 2].axis('off')
                 
                 if not np.isnan(results['PSNR'][-1]):
                     axes[0, 3].imshow(grappa_image, cmap='gray')
-                    axes[0, 3].set_title(f'GRAPPA\nPSNR: {grappa_metrics["PSNR"]:.2f}')
+                    axes[0, 3].set_title(f'GRAPPA\nPSNR: {grappa_metrics["PSNR"]:.2f}\nSSIM: {grappa_metrics["SSIM"]:.2f}')
                 else:
                     axes[0, 3].text(0.5, 0.5, 'GRAPPA Failed', ha='center', va='center')
                 axes[0, 3].axis('off')
