@@ -4,48 +4,92 @@ This repository implements and compares MRI reconstruction techniques from class
 
 ## Repository Structure
 
-### 📁 `src/grappa_vs_unet/`
-**Deep Learning MRI Reconstruction**
+```
+├── lightning_logs/
+├── src/
+│   ├── grappa_vs_unet/
+│   │   ├── lightning_logs/
+│   │   ├── compare_methods.py
+│   │   ├── comparison_sample_0.png
+│   │   ├── comparison_sample_1.png
+│   │   ├── comparison_sample_2.png
+│   │   ├── data_generation.py
+│   │   ├── mri_dataset.h5
+│   │   ├── performance_comparison.png
+│   │   ├── README.md
+│   │   └── train_unet.py
+│   ├── ImageReconstruction/
+│   │   ├── __pycache__/
+│   │   ├── different_interpolation_methods/
+│   │   │   ├── Figures/
+│   │   │   ├── different_interpolation_methods.py
+│   │   │   └── README.md
+│   │   └── first_reconstruction/
+│   │       ├── first_reconstruction.png
+│   │       ├── first_reconstruction.py
+│   │       └── README.md
+│   └── __init__.py
+```
 
-- **`data_generation.py`**: Generates synthetic Shepp-Logan phantoms with realistic undersampling patterns
-- **`train_unet.py`**: Adaptive U-Net with acceleration-aware architecture and built-in data consistency
-- **[📖 README.md](src/grappa_vs_unet/README.md)**: Detailed implementation details and results
+## Project Components
 
-**Key Components:**
-- Synthetic dataset generation with configurable acceleration factors
-- U-Net architecture with adaptive kernel sizes based on acceleration
-- k-space domain training with data consistency enforcement
-- PyTorch Lightning training framework with experiment tracking
+### 📁 **Deep Learning MRI Reconstruction** (`grappa_vs_unet/`)
 
-### 📁 `src/ImageReconstruction/`
-**Classical Reconstruction Methods**
+Advanced deep learning approach implementing an adaptive U-Net architecture specifically designed for MRI reconstruction with comprehensive method comparison.
 
-#### `first_reconstruction/`
-- **`first_reconstruction.py`**: Basic zero-filled reconstruction and k-space fundamentals
-- **[📖 README.md](src/ImageReconstruction/first_reconstruction/README.md)**: Introduction to MRI reconstruction concepts
+**Key Features:**
+- **Synthetic Data Generation**: Creates realistic MRI phantom data with controlled undersampling patterns
+- **Adaptive U-Net Architecture**: Acceleration-aware design with larger kernels (7×7) for wider spatial relationship capture
+- **Built-in Data Consistency**: Enforces consistency between predicted and measured k-space data
+- **Comprehensive Comparison**: Evaluates U-Net against GRAPPA and zero-filled reconstruction methods
+- **Advanced Training Framework**: PyTorch Lightning with mixed precision, experiment tracking via Weights & Biases
 
-#### `different_interpolation_methods/`
-- **`different_interpolation_methods.py`**: Comprehensive comparison of classical techniques including linear/spline k-space interpolation, radial interpolation, and low-pass filtering
-- **[📖 README.md](src/ImageReconstruction/different_interpolation_methods/README.md)**: Detailed analysis of classical methods
+**Results Highlights:**
+- Achieves 1+ dB PSNR improvement over classical methods
+- SSIM improvements from 0.635 to 0.733 indicating better structural preservation
+- Superior artifact removal and noise reduction across diverse phantom geometries
 
-**Key Components:**
-- Multiple interpolation strategies in k-space domain
-- Various phantom types and undersampling patterns
-- Quantitative metrics and frequency domain analysis
-- Performance comparison across different scenarios
+**📖 [Detailed Documentation](src/grappa_vs_unet/README.md)**
+
+### 📁 **Classical Reconstruction Methods** (`ImageReconstruction/`)
+
+Comprehensive exploration of traditional MRI reconstruction techniques and fundamental concepts.
+
+#### **📁 Fundamentals** (`first_reconstruction/`)
+- **Basic Concepts**: Zero-filled reconstruction and k-space fundamentals
+- **Foundation Learning**: Introduction to MRI reconstruction principles
+- **📖 [Getting Started Guide](src/ImageReconstruction/first_reconstruction/README.md)**
+
+#### **📁 Advanced Classical Methods** (`different_interpolation_methods/`)
+- **Comprehensive Comparison**: Linear/spline k-space interpolation, radial interpolation, and low-pass filtering
+- **Multiple Phantom Types**: Various undersampling patterns and scenarios
+- **Quantitative Analysis**: Performance metrics and frequency domain analysis
+- **📖 [Classical Methods Analysis](src/ImageReconstruction/different_interpolation_methods/README.md)**
 
 ## Technical Stack
 - **Deep Learning**: PyTorch, PyTorch Lightning
 - **Scientific Computing**: NumPy, SciPy, scikit-image
 - **Data & Logging**: HDF5, Weights & Biases
+- **Visualization**: Matplotlib, PIL
 
 ## Getting Started
-1. **Basics**: Start with [first_reconstruction](src/ImageReconstruction/first_reconstruction/) for fundamental concepts
-2. **Classical Methods**: Explore [different_interpolation_methods](src/ImageReconstruction/different_interpolation_methods/) for comprehensive classical approaches
-3. **Deep Learning**: Dive into [grappa_vs_unet](src/grappa_vs_unet/) for modern reconstruction techniques
 
-Each folder contains detailed README files with specific implementation details, usage instructions, and result interpretations.
+1. **🏁 Start Here**: Begin with [first_reconstruction](src/ImageReconstruction/first_reconstruction/) for fundamental MRI reconstruction concepts
+2. **📚 Classical Foundations**: Explore [different_interpolation_methods](src/ImageReconstruction/different_interpolation_methods/) for comprehensive classical approaches
+3. **🚀 Modern Techniques**: Dive into [grappa_vs_unet](src/grappa_vs_unet/) for state-of-the-art deep learning reconstruction
 
-## Future Ideas
-- Add another U-Net that learns to reconstruct the image in image space with the real image as target. I feel like there are constraints in both spaces (Image, and k-space) that complement each other
-- Make a reinforcement learning project, where the actor learns to choose which k-space lines to sample next to maximise the psnr.
+Each component contains detailed documentation with implementation specifics, usage instructions, and comprehensive result interpretations.
+
+## Future Research Directions
+
+### 🔬 **Dual-Domain Learning**
+Implement a U-Net that learns to reconstruct in image space with real images as targets. This approach would leverage complementary constraints in both k-space and image domains for potentially superior reconstruction quality.
+
+### 🎯 **Reinforcement Learning for Adaptive Sampling**
+Develop an RL framework where an agent learns optimal k-space sampling strategies to maximize reconstruction quality (PSNR). This could lead to intelligent, content-aware undersampling patterns that adapt to specific anatomy or pathology.
+
+### 🔧 **Multi-Coil Extensions**
+Extend the current single-coil implementations to multi-coil parallel imaging scenarios, incorporating sensitivity map estimation and SENSE/GRAPPA hybrid approaches.
+
+### 📊 **Uncertainty Quantification**
+Integrate uncertainty estimation methods to provide confidence measures for reconstruction quality, particularly important for clinical applications.
