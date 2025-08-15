@@ -68,7 +68,7 @@ This script implements a comprehensive comparison framework to evaluate reconstr
 ```python
 # GRAPPA learns weights w such that: missing_point = w₁×neighbor₁ + w₂×neighbor₂ + ...
 weights = np.linalg.lstsq(sources_combined, targets, rcond=None)[0]
-
+```
 **Evaluation Metrics:**
 - **PSNR (Peak Signal-to-Noise Ratio)**: Measures reconstruction fidelity
 - **SSIM (Structural Similarity Index)**: Assesses perceptual image quality
