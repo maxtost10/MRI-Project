@@ -117,7 +117,7 @@ From the error maps (shown in red/yellow heatmaps), several patterns emerge:
 The model enforces data consistency by replacing predicted k-space values with measured values:
 ```python
 pred_kspace = pred_kspace * (1 - mask_expanded) + input_kspace * mask_expanded
-
+```
 #### Performance Variability
 - **U-Net**: Shows higher variance in performance (PSNR std: 1.47 dB) but consistently achieves better average results
 - **GRAPPA**: More stable performance (PSNR std: 0.79 dB) but limited improvement potential
