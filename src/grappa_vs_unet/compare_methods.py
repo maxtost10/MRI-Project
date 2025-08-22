@@ -10,7 +10,7 @@ from tqdm import tqdm
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 import pandas as pd
-from numpy.fft import ifft2, fftshift, ifftshift
+from numpy.fft import fft2, ifft2, fftshift, ifftshift
 
 # Import from your existing script
 from train_unet import AdaptiveUNet
@@ -36,98 +36,143 @@ def kspace_to_image(kspace: np.ndarray) -> np.ndarray:
     return np.abs(fftshift(ifft2(ifftshift(kspace))))
 
 
-class GRAPPA:
-    """GRAPPA reconstruction for single-coil data (simplified version)."""
-
-    def __init__(self, kernel_size: Tuple[int, int] = (5, 5)):
-        self.kernel_size = kernel_size
-        self.weights = None
-
-    def calibrate(self, kspace: np.ndarray, mask: np.ndarray):
-        """Calibrate GRAPPA weights using ACS region."""
-        ny, nx = kspace.shape
-        ky, kx = self.kernel_size
-
-        # Find ACS region (consecutive fully sampled lines)
-        fully_sampled = np.all(mask, axis=1)
-        acs_indices = np.where(fully_sampled)[0]
-
-        if len(acs_indices) < ky:
-            raise ValueError("Not enough ACS lines for calibration")
-
-        # Prepare calibration data
-        sources = []
-        targets = []
-
-        # For each point in ACS region
-        acs_start, acs_end = acs_indices[0], acs_indices[-1] + 1
-
-        for target_y in range(acs_start + ky // 2, acs_end - ky // 2):
-            for target_x in range(kx // 2, nx - kx // 2):
-                # Extract source patch (excluding center point)
-                source_patch = []
-                for dy in range(-ky // 2, ky // 2 + 1):
-                    for dx in range(-kx // 2, kx // 2 + 1):
-                        if dy != 0 or dx != 0:  # Exclude target point
-                            source_patch.append(kspace[target_y + dy, target_x + dx])
-
-                sources.append(source_patch)
-                targets.append(kspace[target_y, target_x])
-
-        sources = np.array(sources)
-        targets = np.array(targets)
-
-        # Solve for weights using least squares
-        # Separate real and imaginary parts
-        sources_real = np.real(sources)
-        sources_imag = np.imag(sources)
-        targets_real = np.real(targets)
-        targets_imag = np.imag(targets)
-
-        # Stack real and imaginary parts
-        sources_combined = np.hstack([sources_real, sources_imag])
-
-        # Solve for real and imaginary weights separately
-        weights_real = np.linalg.lstsq(sources_combined, targets_real, rcond=None)[0]
-        weights_imag = np.linalg.lstsq(sources_combined, targets_imag, rcond=None)[0]
-
-        self.weights = (weights_real, weights_imag)
-
-    def reconstruct(
-        self, kspace_undersampled: np.ndarray, mask: np.ndarray
-    ) -> np.ndarray:
-        """Reconstruct missing k-space points using GRAPPA."""
-        if self.weights is None:
-            raise ValueError("GRAPPA weights not calibrated")
-
-        ny, nx = kspace_undersampled.shape
-        ky, kx = self.kernel_size
-        kspace_filled = kspace_undersampled.copy()
-        weights_real, weights_imag = self.weights
-
-        # Find missing points
-        for y in range(ky // 2, ny - ky // 2):
-            for x in range(kx // 2, nx - kx // 2):
-                if not mask[y, x]:  # Missing point
-                    # Extract source patch
-                    source_patch = []
-                    for dy in range(-ky // 2, ky // 2 + 1):
-                        for dx in range(-kx // 2, kx // 2 + 1):
-                            if dy != 0 or dx != 0:
-                                source_patch.append(kspace_filled[y + dy, x + dx])
-
-                    source_patch = np.array(source_patch)
-
-                    # Apply weights
-                    source_combined = np.hstack(
-                        [np.real(source_patch), np.imag(source_patch)]
-                    )
-                    pred_real = np.dot(source_combined, weights_real)
-                    pred_imag = np.dot(source_combined, weights_imag)
-
-                    kspace_filled[y, x] = pred_real + 1j * pred_imag
-
-        return kspace_filled
+class TVMinimization:
+    """Total Variation minimization for MRI reconstruction using FISTA algorithm."""
+    
+    def __init__(self, lambda_tv: float = 0.01, max_iter: int = 100, tol: float = 1e-4):
+        """
+        Initialize TV minimization solver.
+        
+        Args:
+            lambda_tv: Regularization parameter for TV penalty
+            max_iter: Maximum number of iterations
+            tol: Convergence tolerance
+        """
+        self.lambda_tv = lambda_tv
+        self.max_iter = max_iter
+        self.tol = tol
+        
+    def _compute_gradient(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Compute image gradients using finite differences."""
+        # Gradient in x direction (with circular boundary)
+        dx = np.roll(x, -1, axis=1) - x
+        # Gradient in y direction (with circular boundary)  
+        dy = np.roll(x, -1, axis=0) - x
+        return dx, dy
+    
+    def _compute_divergence(self, px: np.ndarray, py: np.ndarray) -> np.ndarray:
+        """Compute divergence (adjoint of gradient operator)."""
+        # Divergence is negative adjoint of gradient
+        div_x = px - np.roll(px, 1, axis=1)
+        div_y = py - np.roll(py, 1, axis=0)
+        return div_x + div_y
+    
+    def _prox_tv(self, x: np.ndarray, lambda_param: float, niter: int = 20) -> np.ndarray:
+        """
+        Proximal operator for TV regularization using Chambolle's algorithm.
+        
+        This solves: argmin_u { 0.5 * ||u - x||^2 + lambda_param * TV(u) }
+        """
+        # Initialize dual variables
+        px = np.zeros_like(x)
+        py = np.zeros_like(x)
+        
+        tau = 0.25  # Step size for dual problem
+        
+        for _ in range(niter):
+            # Compute divergence
+            div_p = self._compute_divergence(px, py)
+            
+            # Update primal variable: u = x - λ·div(p)
+            u_tilde = x - lambda_param * div_p
+            
+            # Compute gradient of u_tilde
+            dx, dy = self._compute_gradient(u_tilde)
+            
+            # Update dual variables with projection
+            px_new = px + tau * dx
+            py_new = py + tau * dy
+            
+            # Project onto unit ball (element-wise)
+            norm_p = np.sqrt(px_new**2 + py_new**2)
+            norm_p = np.maximum(norm_p, 1.0)
+            
+            # p[i] = sign(∇u[i]) to maximize λ⟨p, ∇u⟩
+            px = px_new / norm_p 
+            py = py_new / norm_p
+        
+        # Final update
+        return x - lambda_param * self._compute_divergence(px, py)
+    
+    def _data_consistency(self, x: np.ndarray, y: np.ndarray, mask: np.ndarray, 
+                         step_size: float = 1.0) -> np.ndarray:
+        """
+        Gradient step for data consistency term.
+        
+        Computes: x - step_size * A^H(Ax - y)
+        where A is the undersampled Fourier operator.
+        """
+        # Forward: image to k-space
+        x_kspace = fftshift(fft2(ifftshift(x)))
+        
+        # Compute residual in k-space (only at sampled locations)
+        residual = np.zeros_like(x_kspace)
+        residual[mask] = x_kspace[mask] - y[mask]
+        
+        # Backward: k-space to image
+        grad = fftshift(ifft2(ifftshift(residual)))
+        
+        # Apply gradient step (real part for magnitude image)
+        return x - step_size * np.real(grad)
+    
+    def reconstruct(self, kspace_undersampled: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """
+        Reconstruct image from undersampled k-space using TV minimization.
+        
+        Uses FISTA (Fast Iterative Shrinkage-Thresholding Algorithm).
+        """
+        # Initialize with zero-filled reconstruction
+        x = kspace_to_image(kspace_undersampled)
+        
+        # FISTA parameters
+        t = 1.0
+        x_old = x.copy()
+        
+        # Lipschitz constant (approximate)
+        L = 2.0  # For normalized FFT
+        step_size = 1.0 / L
+        
+        # Main FISTA loop
+        pbar = tqdm(range(self.max_iter), desc="TV minimization", leave=False)
+        
+        for iteration in pbar:
+            # Momentum term (FISTA acceleration)
+            if iteration > 0:
+                t_new = (1 + np.sqrt(1 + 4 * t**2)) / 2
+                y = x + ((t - 1) / t_new) * (x - x_old)
+                t = t_new
+            else:
+                y = x
+            
+            # Data consistency gradient step
+            x_temp = self._data_consistency(y, kspace_undersampled, mask, step_size)
+            
+            # Proximal TV step
+            x_new = self._prox_tv(x_temp, self.lambda_tv * step_size)
+            
+            # Check convergence
+            rel_change = np.linalg.norm(x_new - x) / (np.linalg.norm(x) + 1e-8)
+            pbar.set_postfix({'rel_change': f'{rel_change:.2e}'})
+            
+            if rel_change < self.tol:
+                pbar.close()
+                break
+            
+            # Update
+            x_old = x
+            x = x_new
+        
+        return x
 
 
 def evaluate_reconstruction(
@@ -151,9 +196,10 @@ def compare_methods(
     dataset_path: str,
     model_path: str,
     num_samples: int = 20,
+    lambda_tv: float = 0.01,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
 ):
-    """Compare U-Net and GRAPPA reconstruction methods."""
+    """Compare U-Net and TV minimization reconstruction methods."""
 
     # Load model
     print("Loading model...")
@@ -168,6 +214,9 @@ def compare_methods(
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
+
+    # Initialize TV solver
+    tv_solver = TVMinimization(lambda_tv=lambda_tv, max_iter=100)
 
     # Initialize results storage
     results = {"sample_idx": [], "method": [], "PSNR": [], "SSIM": [], "RMSE": []}
@@ -220,28 +269,16 @@ def compare_methods(
             results["SSIM"].append(unet_metrics["SSIM"])
             results["RMSE"].append(unet_metrics["RMSE"])
 
-            # GRAPPA reconstruction
-            try:
-                grappa = GRAPPA(kernel_size=(5, 5))
-                grappa.calibrate(kspace_undersampled, mask)
-                kspace_grappa = grappa.reconstruct(kspace_undersampled, mask)
-                grappa_image = kspace_to_image(kspace_grappa)
+            # TV minimization reconstruction
+            print(f"\nSample {idx}: Running TV minimization...")
+            tv_image = tv_solver.reconstruct(kspace_undersampled, mask)
+            tv_metrics = evaluate_reconstruction(gt_image, tv_image)
 
-                grappa_metrics = evaluate_reconstruction(gt_image, grappa_image)
-
-                results["sample_idx"].append(idx)
-                results["method"].append("GRAPPA")
-                results["PSNR"].append(grappa_metrics["PSNR"])
-                results["SSIM"].append(grappa_metrics["SSIM"])
-                results["RMSE"].append(grappa_metrics["RMSE"])
-
-            except Exception as e:
-                print(f"GRAPPA failed for sample {idx}: {e}")
-                results["sample_idx"].append(idx)
-                results["method"].append("GRAPPA")
-                results["PSNR"].append(np.nan)
-                results["SSIM"].append(np.nan)
-                results["RMSE"].append(np.nan)
+            results["sample_idx"].append(idx)
+            results["method"].append("TV")
+            results["PSNR"].append(tv_metrics["PSNR"])
+            results["SSIM"].append(tv_metrics["SSIM"])
+            results["RMSE"].append(tv_metrics["RMSE"])
 
             # Visualize first few samples
             if idx < 5:
@@ -264,13 +301,10 @@ def compare_methods(
                 )
                 axes[0, 2].axis("off")
 
-                if not np.isnan(results["PSNR"][-1]):
-                    axes[0, 3].imshow(grappa_image, cmap="gray")
-                    axes[0, 3].set_title(
-                        f'GRAPPA\nPSNR: {grappa_metrics["PSNR"]:.2f}\nSSIM: {grappa_metrics["SSIM"]:.2f}'
-                    )
-                else:
-                    axes[0, 3].text(0.5, 0.5, "GRAPPA Failed", ha="center", va="center")
+                axes[0, 3].imshow(tv_image, cmap="gray")
+                axes[0, 3].set_title(
+                    f'TV (λ={lambda_tv})\nPSNR: {tv_metrics["PSNR"]:.2f}\nSSIM: {tv_metrics["SSIM"]:.2f}'
+                )
                 axes[0, 3].axis("off")
 
                 # Error maps
@@ -288,15 +322,14 @@ def compare_methods(
                 axes[1, 2].set_title("U-Net Error")
                 axes[1, 2].axis("off")
 
-                if not np.isnan(results["PSNR"][-1]):
-                    error_grappa = np.abs(gt_image - grappa_image)
-                    axes[1, 3].imshow(error_grappa, cmap="hot", vmin=0, vmax=0.5)
-                    axes[1, 3].set_title("GRAPPA Error")
+                error_tv = np.abs(gt_image - tv_image)
+                axes[1, 3].imshow(error_tv, cmap="hot", vmin=0, vmax=0.5)
+                axes[1, 3].set_title("TV Error")
                 axes[1, 3].axis("off")
 
                 plt.suptitle(f"Sample {idx} Comparison")
                 plt.tight_layout()
-                plt.savefig(f"comparison_sample_{idx}.png", dpi=150)
+                plt.savefig(f"comparison_tv_sample_{idx}.png", dpi=150)
                 plt.show()
 
     # Create results dataframe
@@ -316,42 +349,129 @@ def compare_methods(
     for i, metric in enumerate(metrics):
         data_to_plot = [
             results_df[results_df["method"] == method][metric].dropna()
-            for method in ["Zero-filled", "U-Net", "GRAPPA"]
+            for method in ["Zero-filled", "U-Net", "TV"]
         ]
 
-        axes[i].boxplot(data_to_plot, labels=["Zero-filled", "U-Net", "GRAPPA"])
+        axes[i].boxplot(data_to_plot, labels=["Zero-filled", "U-Net", "TV"])
         axes[i].set_title(f"{metric} Distribution")
         axes[i].set_ylabel(metric)
         axes[i].grid(True, alpha=0.3)
 
     plt.suptitle("Reconstruction Performance Comparison")
     plt.tight_layout()
-    plt.savefig("performance_comparison.png", dpi=150)
+    plt.savefig("performance_comparison_tv.png", dpi=150)
     plt.show()
 
     # Save detailed results
-    results_df.to_csv("reconstruction_results.csv", index=False)
-    print("\nDetailed results saved to 'reconstruction_results.csv'")
+    results_df.to_csv("reconstruction_results_tv.csv", index=False)
+    print("\nDetailed results saved to 'reconstruction_results_tv.csv'")
 
     return results_df
 
 
+def hyperparameter_search(
+    dataset_path: str,
+    num_samples: int = 5,
+    lambda_values: list = [0.001, 0.005, 0.01, 0.05, 0.1]
+):
+    """Search for optimal TV regularization parameter."""
+    
+    print("=== TV Hyperparameter Search ===")
+    
+    with h5py.File(dataset_path, "r") as f:
+        test_data = f["train"]
+        
+        results = {
+            'lambda': [],
+            'avg_psnr': [],
+            'avg_ssim': []
+        }
+        
+        for lambda_tv in lambda_values:
+            print(f"\nTesting λ = {lambda_tv}")
+            tv_solver = TVMinimization(lambda_tv=lambda_tv, max_iter=100)
+            
+            psnr_values = []
+            ssim_values = []
+            
+            for idx in range(min(num_samples, test_data["phantoms"].shape[0])):
+                kspace_full = test_data["kspace_full"][idx]
+                kspace_undersampled = test_data["kspace_undersampled"][idx]
+                mask = test_data["masks"][idx]
+                
+                gt_image = kspace_to_image(kspace_full)
+                tv_image = tv_solver.reconstruct(kspace_undersampled, mask)
+                
+                metrics = evaluate_reconstruction(gt_image, tv_image)
+                psnr_values.append(metrics["PSNR"])
+                ssim_values.append(metrics["SSIM"])
+            
+            avg_psnr = np.mean(psnr_values)
+            avg_ssim = np.mean(ssim_values)
+            
+            results['lambda'].append(lambda_tv)
+            results['avg_psnr'].append(avg_psnr)
+            results['avg_ssim'].append(avg_ssim)
+            
+            print(f"  Average PSNR: {avg_psnr:.2f}")
+            print(f"  Average SSIM: {avg_ssim:.3f}")
+    
+    # Plot results
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    ax1.semilogx(results['lambda'], results['avg_psnr'], 'o-')
+    ax1.set_xlabel('λ (TV regularization)')
+    ax1.set_ylabel('Average PSNR (dB)')
+    ax1.set_title('PSNR vs TV Regularization')
+    ax1.grid(True, alpha=0.3)
+    
+    ax2.semilogx(results['lambda'], results['avg_ssim'], 'o-')
+    ax2.set_xlabel('λ (TV regularization)')
+    ax2.set_ylabel('Average SSIM')
+    ax2.set_title('SSIM vs TV Regularization')
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('tv_hyperparameter_search.png', dpi=150)
+    plt.show()
+    
+    # Find optimal lambda
+    optimal_idx = np.argmax(results['avg_psnr'])
+    optimal_lambda = results['lambda'][optimal_idx]
+    print(f"\nOptimal λ = {optimal_lambda} (based on PSNR)")
+    
+    return optimal_lambda
+
+
 # %%
 if __name__ == "__main__":
-    # Run comparison
+    # First, find optimal lambda
+    optimal_lambda = hyperparameter_search(
+        dataset_path="./mri_dataset.h5",
+        num_samples=5,
+        lambda_values=[0.001, 0.005, 0.01, 0.05, 0.1]
+    )
+    
+    # Run comparison with optimal lambda
     results = compare_methods(
         dataset_path="./mri_dataset.h5",
         model_path="./adaptive-unet.pth",
         num_samples=20,
+        lambda_tv=optimal_lambda
     )
 
     # Additional analysis
     print("\n=== Performance Improvement over Zero-filled ===")
     zero_filled_psnr = results[results["method"] == "Zero-filled"]["PSNR"].mean()
     unet_psnr = results[results["method"] == "U-Net"]["PSNR"].mean()
-    grappa_psnr = results[results["method"] == "GRAPPA"]["PSNR"].mean()
+    tv_psnr = results[results["method"] == "TV"]["PSNR"].mean()
 
     print(f"U-Net improvement: {unet_psnr - zero_filled_psnr:.2f} dB")
-    print(f"GRAPPA improvement: {grappa_psnr - zero_filled_psnr:.2f} dB")
+    print(f"TV improvement: {tv_psnr - zero_filled_psnr:.2f} dB")
+    
+    # Compare computational aspects
+    print("\n=== Method Characteristics ===")
+    print("U-Net: Fast inference, requires training data, may hallucinate")
+    print("TV: No training needed, slower iterative optimization, preserves edges")
 
 # %%
