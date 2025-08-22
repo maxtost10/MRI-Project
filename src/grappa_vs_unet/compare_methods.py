@@ -216,7 +216,7 @@ def compare_methods(
     model.eval()
 
     # Initialize TV solver
-    tv_solver = TVMinimization(lambda_tv=lambda_tv, max_iter=100)
+    tv_solver = TVMinimization(lambda_tv=lambda_tv, max_iter=300)
 
     # Initialize results storage
     results = {"sample_idx": [], "method": [], "PSNR": [], "SSIM": [], "RMSE": []}
@@ -372,7 +372,7 @@ def compare_methods(
 def hyperparameter_search(
     dataset_path: str,
     num_samples: int = 5,
-    lambda_values: list = [0.001, 0.005, 0.01, 0.05, 0.1]
+    lambda_values: list = [0.001, 0.0001, 0.00001, 0.000001]
 ):
     """Search for optimal TV regularization parameter."""
     
@@ -449,7 +449,7 @@ if __name__ == "__main__":
     optimal_lambda = hyperparameter_search(
         dataset_path="./mri_dataset.h5",
         num_samples=5,
-        lambda_values=[0.001, 0.005, 0.01, 0.05, 0.1]
+        lambda_values=[0.001, 0.0001, 0.00001, 0.000001]
     )
     
     # Run comparison with optimal lambda
