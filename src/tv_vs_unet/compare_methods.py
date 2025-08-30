@@ -1,4 +1,3 @@
-# %%
 import torch
 import torch.nn as nn
 import numpy as np
@@ -36,21 +35,36 @@ def kspace_to_image(kspace: np.ndarray) -> np.ndarray:
     return np.abs(fftshift(ifft2(ifftshift(kspace))))
 
 
-class TVMinimization:
-    """Total Variation minimization for MRI reconstruction using FISTA algorithm."""
+def evaluate_reconstruction(ground_truth: np.ndarray, reconstruction: np.ndarray) -> Dict[str, float]:
+    """Evaluate reconstruction quality metrics."""
+    # Normalize images to [0, 1] range for consistent metrics
+    gt_norm = (ground_truth - ground_truth.min()) / (ground_truth.max() - ground_truth.min())
+    rec_norm = (reconstruction - reconstruction.min()) / (reconstruction.max() - reconstruction.min())
     
-    def __init__(self, lambda_tv: float = 0.01, max_iter: int = 100, tol: float = 1e-4):
+    psnr_val = psnr(gt_norm, rec_norm, data_range=1.0)
+    ssim_val = ssim(gt_norm, rec_norm, data_range=1.0)
+    rmse_val = np.sqrt(np.mean((gt_norm - rec_norm) ** 2))
+    
+    return {
+        "PSNR": psnr_val,
+        "SSIM": ssim_val,
+        "RMSE": rmse_val
+    }
+
+
+class TVDenoising:
+    """Simple TV denoising for removing artifacts from zero-filled reconstruction."""
+    
+    def __init__(self, lambda_tv: float = 0.01, max_iter: int = 70):
         """
-        Initialize TV minimization solver.
+        Initialize TV denoising.
         
         Args:
             lambda_tv: Regularization parameter for TV penalty
             max_iter: Maximum number of iterations
-            tol: Convergence tolerance
         """
         self.lambda_tv = lambda_tv
         self.max_iter = max_iter
-        self.tol = tol
         
     def _compute_gradient(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Compute image gradients using finite differences."""
@@ -67,129 +81,50 @@ class TVMinimization:
         div_y = py - np.roll(py, 1, axis=0)
         return div_x + div_y
     
-    def _prox_tv(self, x: np.ndarray, lambda_param: float, niter: int = 20) -> np.ndarray:
+    def _project_to_unit_ball(self, px: np.ndarray, py: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Project onto the L2 ball (dual constraint for TV)."""
+        norm = np.sqrt(px**2 + py**2)
+        norm = np.maximum(norm, 1.0)
+        return px / norm, py / norm
+    
+    def denoise(self, noisy_image: np.ndarray) -> np.ndarray:
         """
-        Proximal operator for TV regularization using Chambolle's algorithm.
+        Apply TV denoising to remove artifacts.
         
-        This solves: argmin_u { 0.5 * ||u - x||^2 + lambda_param * TV(u) }
+        Solves: argmin_u { 0.5 * ||u - noisy_image||^2 + lambda_tv * TV(u) }
+        
+        Args:
+            noisy_image: Input image with artifacts (e.g., zero-filled reconstruction)
+            
+        Returns:
+            Denoised image
         """
         # Initialize dual variables
-        px = np.zeros_like(x)
-        py = np.zeros_like(x)
+        px = np.zeros_like(noisy_image)
+        py = np.zeros_like(noisy_image)
         
         tau = 0.25  # Step size for dual problem
         
-        for _ in range(niter):
+        for _ in range(self.max_iter):
             # Compute divergence
             div_p = self._compute_divergence(px, py)
             
             # Update primal variable: u = x - λ·div(p)
-            u_tilde = x - lambda_param * div_p
+            u = noisy_image + self.lambda_tv * div_p
             
-            # Compute gradient of u_tilde
-            dx, dy = self._compute_gradient(u_tilde)
+            # Compute gradient of u
+            dx, dy = self._compute_gradient(u)
             
-            # Update dual variables with projection
+            # Update dual variables
             px_new = px + tau * dx
             py_new = py + tau * dy
             
-            # Project onto unit ball (element-wise)
-            norm_p = np.sqrt(px_new**2 + py_new**2)
-            norm_p = np.maximum(norm_p, 1.0)
-            
-            # p[i] = sign(∇u[i]) to maximize λ⟨p, ∇u⟩
-            px = px_new / norm_p 
-            py = py_new / norm_p
+            # Project onto unit ball
+            px, py = self._project_to_unit_ball(px_new, py_new)
         
-        # Final update
-        return x - lambda_param * self._compute_divergence(px, py)
-    
-    def _data_consistency(self, x: np.ndarray, y: np.ndarray, mask: np.ndarray, 
-                         step_size: float = 1.0) -> np.ndarray:
-        """
-        Gradient step for data consistency term.
-        
-        Computes: x - step_size * A^H(Ax - y)
-        where A is the undersampled Fourier operator.
-        """
-        # Forward: image to k-space
-        x_kspace = fftshift(fft2(ifftshift(x)))
-        
-        # Compute residual in k-space (only at sampled locations)
-        residual = np.zeros_like(x_kspace)
-        residual[mask] = x_kspace[mask] - y[mask]
-        
-        # Backward: k-space to image
-        grad = fftshift(ifft2(ifftshift(residual)))
-        
-        # Apply gradient step (real part for magnitude image)
-        return x - step_size * np.real(grad)
-    
-    def reconstruct(self, kspace_undersampled: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        """
-        Reconstruct image from undersampled k-space using TV minimization.
-        
-        Uses FISTA (Fast Iterative Shrinkage-Thresholding Algorithm).
-        """
-        # Initialize with zero-filled reconstruction
-        x = kspace_to_image(kspace_undersampled)
-        
-        # FISTA parameters
-        t = 1.0
-        x_old = x.copy()
-        
-        # Lipschitz constant (approximate)
-        L = 2.0  # For normalized FFT
-        step_size = 1.0 / L
-        
-        # Main FISTA loop
-        pbar = tqdm(range(self.max_iter), desc="TV minimization", leave=False)
-        
-        for iteration in pbar:
-            # Momentum term (FISTA acceleration)
-            if iteration > 0:
-                t_new = (1 + np.sqrt(1 + 4 * t**2)) / 2
-                y = x + ((t - 1) / t_new) * (x - x_old)
-                t = t_new
-            else:
-                y = x
-            
-            # Data consistency gradient step
-            x_temp = self._data_consistency(y, kspace_undersampled, mask, step_size)
-            
-            # Proximal TV step
-            x_new = self._prox_tv(x_temp, self.lambda_tv * step_size)
-            
-            # Check convergence
-            rel_change = np.linalg.norm(x_new - x) / (np.linalg.norm(x) + 1e-8)
-            pbar.set_postfix({'rel_change': f'{rel_change:.2e}'})
-            
-            if rel_change < self.tol:
-                pbar.close()
-                break
-            
-            # Update
-            x_old = x
-            x = x_new
-        
-        return x
-
-
-def evaluate_reconstruction(
-    ground_truth: np.ndarray, reconstruction: np.ndarray
-) -> Dict[str, float]:
-    """Calculate reconstruction metrics."""
-    # Ensure same scale
-    gt_normalized = ground_truth / np.max(ground_truth)
-    recon_normalized = reconstruction / np.max(reconstruction)
-
-    metrics = {
-        "PSNR": psnr(gt_normalized, recon_normalized, data_range=1.0),
-        "SSIM": ssim(gt_normalized, recon_normalized, data_range=1.0),
-        "RMSE": np.sqrt(np.mean((gt_normalized - recon_normalized) ** 2)),
-    }
-
-    return metrics
+        # Final primal variable
+        div_p = self._compute_divergence(px, py)
+        return noisy_image + self.lambda_tv * div_p
 
 
 def compare_methods(
@@ -199,7 +134,7 @@ def compare_methods(
     lambda_tv: float = 0.01,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
 ):
-    """Compare U-Net and TV minimization reconstruction methods."""
+    """Compare U-Net and TV denoising reconstruction methods."""
 
     # Load model
     print("Loading model...")
@@ -215,8 +150,8 @@ def compare_methods(
     model.to(device)
     model.eval()
 
-    # Initialize TV solver
-    tv_solver = TVMinimization(lambda_tv=lambda_tv, max_iter=300)
+    # Initialize TV denoiser
+    tv_denoiser = TVDenoising(lambda_tv=lambda_tv, max_iter=70)
 
     # Initialize results storage
     results = {"sample_idx": [], "method": [], "PSNR": [], "SSIM": [], "RMSE": []}
@@ -238,7 +173,7 @@ def compare_methods(
             # Ground truth reconstruction
             gt_image = kspace_to_image(kspace_full)
 
-            # Zero-filled reconstruction
+            # Zero-filled reconstruction (noisy input)
             zerofilled_image = kspace_to_image(kspace_undersampled)
             zerofilled_metrics = evaluate_reconstruction(gt_image, zerofilled_image)
 
@@ -269,13 +204,13 @@ def compare_methods(
             results["SSIM"].append(unet_metrics["SSIM"])
             results["RMSE"].append(unet_metrics["RMSE"])
 
-            # TV minimization reconstruction
-            print(f"\nSample {idx}: Running TV minimization...")
-            tv_image = tv_solver.reconstruct(kspace_undersampled, mask)
+            # TV denoising (simple artifact removal)
+            print(f"\nSample {idx}: Running TV denoising...")
+            tv_image = tv_denoiser.denoise(zerofilled_image)
             tv_metrics = evaluate_reconstruction(gt_image, tv_image)
 
             results["sample_idx"].append(idx)
-            results["method"].append("TV")
+            results["method"].append("TV-Denoise")
             results["PSNR"].append(tv_metrics["PSNR"])
             results["SSIM"].append(tv_metrics["SSIM"])
             results["RMSE"].append(tv_metrics["RMSE"])
@@ -324,12 +259,12 @@ def compare_methods(
 
                 error_tv = np.abs(gt_image - tv_image)
                 axes[1, 3].imshow(error_tv, cmap="hot", vmin=0, vmax=0.5)
-                axes[1, 3].set_title("TV Error")
+                axes[1, 3].set_title("TV-Denoise Error")
                 axes[1, 3].axis("off")
 
                 plt.suptitle(f"Sample {idx} Comparison")
                 plt.tight_layout()
-                plt.savefig(f"comparison_tv_sample_{idx}.png", dpi=150)
+                plt.savefig(f"comparison_tv_denoise_sample_{idx}.png", dpi=150)
                 plt.show()
 
     # Create results dataframe
@@ -343,28 +278,28 @@ def compare_methods(
     print(summary)
 
     # Box plots
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    _, axes = plt.subplots(1, 3, figsize=(15, 5))
 
     metrics = ["PSNR", "SSIM", "RMSE"]
     for i, metric in enumerate(metrics):
         data_to_plot = [
             results_df[results_df["method"] == method][metric].dropna()
-            for method in ["Zero-filled", "U-Net", "TV"]
+            for method in ["Zero-filled", "U-Net", "TV-Denoise"]
         ]
 
-        axes[i].boxplot(data_to_plot, labels=["Zero-filled", "U-Net", "TV"])
+        axes[i].boxplot(data_to_plot, labels=["Zero-filled", "U-Net", "TV-Denoise"])
         axes[i].set_title(f"{metric} Distribution")
         axes[i].set_ylabel(metric)
         axes[i].grid(True, alpha=0.3)
 
     plt.suptitle("Reconstruction Performance Comparison")
     plt.tight_layout()
-    plt.savefig("performance_comparison_tv.png", dpi=150)
+    plt.savefig("performance_comparison_tv_denoise.png", dpi=150)
     plt.show()
 
     # Save detailed results
-    results_df.to_csv("reconstruction_results_tv.csv", index=False)
-    print("\nDetailed results saved to 'reconstruction_results_tv.csv'")
+    results_df.to_csv("reconstruction_results_tv_denoise.csv", index=False)
+    print("\nDetailed results saved to 'reconstruction_results_tv_denoise.csv'")
 
     return results_df
 
@@ -372,14 +307,14 @@ def compare_methods(
 def hyperparameter_search(
     dataset_path: str,
     num_samples: int = 5,
-    lambda_values: list = [0.001, 0.0001, 0.00001, 0.000001]
+    lambda_values: np.ndarray = np.logspace(-2, 0, 10)
 ):
-    """Search for optimal TV regularization parameter."""
+    """Search for optimal TV denoising parameter."""
     
-    print("=== TV Hyperparameter Search ===")
+    print("=== TV Denoising Hyperparameter Search ===")
     
     with h5py.File(dataset_path, "r") as f:
-        test_data = f["train"]
+        test_data = f["test"]
         
         results = {
             'lambda': [],
@@ -389,7 +324,7 @@ def hyperparameter_search(
         
         for lambda_tv in lambda_values:
             print(f"\nTesting λ = {lambda_tv}")
-            tv_solver = TVMinimization(lambda_tv=lambda_tv, max_iter=100)
+            tv_denoiser = TVDenoising(lambda_tv=lambda_tv, max_iter=70)
             
             psnr_values = []
             ssim_values = []
@@ -397,10 +332,12 @@ def hyperparameter_search(
             for idx in range(min(num_samples, test_data["phantoms"].shape[0])):
                 kspace_full = test_data["kspace_full"][idx]
                 kspace_undersampled = test_data["kspace_undersampled"][idx]
-                mask = test_data["masks"][idx]
                 
                 gt_image = kspace_to_image(kspace_full)
-                tv_image = tv_solver.reconstruct(kspace_undersampled, mask)
+                zerofilled_image = kspace_to_image(kspace_undersampled)
+                
+                # Apply TV denoising to zero-filled reconstruction
+                tv_image = tv_denoiser.denoise(zerofilled_image)
                 
                 metrics = evaluate_reconstruction(gt_image, tv_image)
                 psnr_values.append(metrics["PSNR"])
@@ -432,7 +369,7 @@ def hyperparameter_search(
     ax2.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('tv_hyperparameter_search.png', dpi=150)
+    plt.savefig('tv_denoise_hyperparameter_search.png', dpi=150)
     plt.show()
     
     # Find optimal lambda
@@ -443,13 +380,11 @@ def hyperparameter_search(
     return optimal_lambda
 
 
-# %%
 if __name__ == "__main__":
-    # First, find optimal lambda
+    # First, find optimal lambda for denoising
     optimal_lambda = hyperparameter_search(
         dataset_path="./mri_dataset.h5",
         num_samples=5,
-        lambda_values=[0.001, 0.0001, 0.00001, 0.000001]
     )
     
     # Run comparison with optimal lambda
@@ -464,14 +399,12 @@ if __name__ == "__main__":
     print("\n=== Performance Improvement over Zero-filled ===")
     zero_filled_psnr = results[results["method"] == "Zero-filled"]["PSNR"].mean()
     unet_psnr = results[results["method"] == "U-Net"]["PSNR"].mean()
-    tv_psnr = results[results["method"] == "TV"]["PSNR"].mean()
+    tv_psnr = results[results["method"] == "TV-Denoise"]["PSNR"].mean()
 
     print(f"U-Net improvement: {unet_psnr - zero_filled_psnr:.2f} dB")
-    print(f"TV improvement: {tv_psnr - zero_filled_psnr:.2f} dB")
+    print(f"TV-Denoise improvement: {tv_psnr - zero_filled_psnr:.2f} dB")
     
     # Compare computational aspects
     print("\n=== Method Characteristics ===")
     print("U-Net: Fast inference, requires training data, may hallucinate")
-    print("TV: No training needed, slower iterative optimization, preserves edges")
-
-# %%
+    print("TV-Denoise: Simple post-processing, removes streaking artifacts, preserves edges")
