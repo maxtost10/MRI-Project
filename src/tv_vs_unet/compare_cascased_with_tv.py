@@ -11,7 +11,7 @@ from compare_methods import (
 
 # Import models
 from train_unet import AdaptiveUNet
-from train_cascaded import CascadedMRIReconstruction
+from train_cascaded_refinement import CascadedMRIReconstruction
 
 
 def compare_cascaded_methods(
@@ -177,7 +177,7 @@ def compare_cascaded_methods(
 
                 plt.suptitle(f"Sample {idx} - Cascaded Model Comparison", fontsize=16)
                 plt.tight_layout()
-                plt.savefig(f"comparison_cascaded_sample_{idx}.png", dpi=300, bbox_inches='tight')
+                plt.savefig(f"plots_tv_cascaded_comparison/comparison_cascaded_sample_{idx}.png", dpi=300, bbox_inches='tight')
                 plt.show()
 
     # Convert to DataFrame and analyze
@@ -209,7 +209,7 @@ def compare_cascaded_methods(
 
     plt.suptitle("Cascaded Model Performance Comparison", fontsize=16)
     plt.tight_layout()
-    plt.savefig("performance_comparison_cascaded.png", dpi=300, bbox_inches='tight')
+    plt.savefig("plots_tv_cascaded_comparison/performance_comparison_cascaded.png", dpi=300, bbox_inches='tight')
     plt.show()
 
     # Save results
