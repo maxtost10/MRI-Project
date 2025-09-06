@@ -112,6 +112,7 @@ class CascadedMRIReconstruction(pl.LightningModule):
         kspace_model_path: str,
         learning_rate: float = 1e-4,
         weight_decay: float = 1e-5,
+        lambda_l1: float = 1e-3,  # Add this parameter
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -194,13 +195,19 @@ class CascadedMRIReconstruction(pl.LightningModule):
         # Ground truth needs channel dimension
         phantom_gt = phantom_gt.unsqueeze(1)
         
-        # Compute losses
-        # Primary loss: refined image vs ground truth phantom
+        # Compute reconstruction losses
         l1_loss = self.l1_loss(refined_image, phantom_gt)
         l2_loss = self.l2_loss(refined_image, phantom_gt)
+        reconstruction_loss = l1_loss + 0.1 * l2_loss
         
-        # Combine losses
-        total_loss = l1_loss + 0.1 * l2_loss
+        # Compute L1 regularization loss
+        l1_reg_loss = 0
+        for param in self.refinement_model.parameters():
+            l1_reg_loss += torch.sum(torch.abs(param))
+        l1_reg_loss = self.hparams.lambda_l1 * l1_reg_loss
+        
+        # Total loss
+        total_loss = reconstruction_loss + l1_reg_loss
         
         # Calculate metrics
         with torch.no_grad():
@@ -219,6 +226,10 @@ class CascadedMRIReconstruction(pl.LightningModule):
         self.log(f'{stage}_psnr_refined', psnr, on_step=False, on_epoch=True, prog_bar=True)
         self.log(f'{stage}_psnr_unrefined', psnr_unrefined, on_step=False, on_epoch=True)
         self.log(f'{stage}_psnr_improvement', psnr - psnr_unrefined, on_step=False, on_epoch=True)
+        
+        # Print loss components during training
+        if stage == 'train' and self.global_step % 5 == 0:  # Print every 50 steps
+            print(f"Step {self.global_step}: Reconstruction Loss = {reconstruction_loss:.6f}, L1 Reg Loss = {self.hparams.lambda_l1 * l1_reg_loss:.6f}")
         
         return total_loss
     
@@ -264,6 +275,7 @@ def train_cascaded_model(
     num_epochs: int = 30,
     batch_size: int = 8,
     learning_rate: float = 1e-4,
+    lambda_l1: float = 1e-3,  # Add this parameter
     gpus: int = 1,
     use_wandb: bool = True,
     project_name: str = "mri-cascaded-refinement",
@@ -284,6 +296,7 @@ def train_cascaded_model(
     model = CascadedMRIReconstruction(
         kspace_model_path=kspace_model_path,
         learning_rate=learning_rate,
+        lambda_l1=lambda_l1,
     )
     
     # Callbacks
@@ -482,7 +495,8 @@ if __name__ == "__main__":
     DATASET_PATH = './mri_dataset.h5'
     
     # Optionally login to wandb
-    # wandb.login(key="YOUR_KEY")
+    wandb.login(key="8709b844d342b1f107a01f58f5c666423f2f9656")
+    
     
     if TRAIN_CASCADED:
         print("Training cascaded MRI reconstruction model...")

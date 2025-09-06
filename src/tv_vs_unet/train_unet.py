@@ -35,6 +35,7 @@ class MRIDataset(Dataset):
             kspace_full = group['kspace_full'][idx]
             kspace_undersampled = group['kspace_undersampled'][idx]
             mask = group['masks'][idx]
+            phantom_gt = group['phantoms'][idx]
             
             # Convert to torch tensors
             # Stack real and imaginary parts as channels
@@ -49,8 +50,9 @@ class MRIDataset(Dataset):
             ])
             
             mask_tensor = torch.from_numpy(mask.astype(np.float32))
+            phantom_gt_tensor = torch.from_numpy(phantom_gt.astype(np.float32))
             
-        return kspace_us_tensor, kspace_full_tensor, mask_tensor
+        return kspace_us_tensor, kspace_full_tensor, mask_tensor, phantom_gt_tensor
 
 class AdaptiveUNet(nn.Module):
     """U-Net with acceleration-factor-aware architecture and built-in data consistency."""
