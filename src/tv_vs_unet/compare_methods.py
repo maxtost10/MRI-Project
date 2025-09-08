@@ -34,12 +34,12 @@ def kspace_to_image(kspace: np.ndarray) -> np.ndarray:
     """Reconstruct image from k-space using inverse 2D FFT."""
     return np.abs(fftshift(ifft2(ifftshift(kspace))))
 
-
 def evaluate_reconstruction(ground_truth: np.ndarray, reconstruction: np.ndarray) -> Dict[str, float]:
     """Evaluate reconstruction quality metrics."""
-    # Normalize images to [0, 1] range for consistent metrics
-    gt_norm = (ground_truth - ground_truth.min()) / (ground_truth.max() - ground_truth.min())
-    rec_norm = (reconstruction - reconstruction.min()) / (reconstruction.max() - reconstruction.min())
+    # Use consistent normalization based on ground truth range
+    gt_min, gt_max = ground_truth.min(), ground_truth.max()
+    gt_norm = (ground_truth - gt_min) / (gt_max - gt_min)
+    rec_norm = np.clip((reconstruction - gt_min) / (gt_max - gt_min), 0, 1)
     
     psnr_val = psnr(gt_norm, rec_norm, data_range=1.0)
     ssim_val = ssim(gt_norm, rec_norm, data_range=1.0)
