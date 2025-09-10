@@ -1,8 +1,38 @@
 [tool.ruff]
-line-length = 88  # oder z.B. 100, je nach Vorliebe
-target-version = "py39"  # Deine Python-Version
-select = ["E", "F", "I"]  # E: Pycodestyle, F: Pyflakes, I: Import Sorting (isort)
-ignore = []  # Ignorieren kannst du später noch anpassen
+line-length = 88
+target-version = "py38"
 
-[tool.ruff.isort]
-known-first-party = ["your_package_name"]  # optional, dein Package-Name für Importsortierung
+[tool.ruff.lint]
+# Erweiterte Regel-Sets aktivieren
+select = [
+    "E",   # pycodestyle errors  
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "D",   # pydocstyle (Docstring-Regeln!)
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "S",   # flake8-bandit (Security)
+    "T20", # flake8-print (keine print statements)
+    "PT",  # flake8-pytest-style
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "PL",  # Pylint
+    "ARG", # flake8-unused-arguments
+]
+
+ignore = [
+    "D100", # Missing docstring in public module (optional)
+    "D104", # Missing docstring in public package (optional)
+]
+
+[tool.ruff.lint.pydocstyle]
+# Google-Style Docstrings (oder "numpy" oder "pep257")
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests brauchen nicht immer Docstrings
+"test_*.py" = ["D"]
+"tests/*.py" = ["D"]
