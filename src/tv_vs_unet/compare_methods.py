@@ -1,15 +1,14 @@
-import torch
-import torch.nn as nn
-import numpy as np
+from typing import Dict, Tuple
+
 import h5py
 import matplotlib.pyplot as plt
-from pathlib import Path
-from typing import Dict, Tuple
-from tqdm import tqdm
-from skimage.metrics import structural_similarity as ssim
-from skimage.metrics import peak_signal_noise_ratio as psnr
+import numpy as np
 import pandas as pd
-from numpy.fft import fft2, ifft2, fftshift, ifftshift
+import torch
+from numpy.fft import fftshift, ifft2, ifftshift
+from skimage.metrics import peak_signal_noise_ratio as psnr
+from skimage.metrics import structural_similarity as ssim
+from tqdm import tqdm
 
 # Import from your existing script
 from train_unet import AdaptiveUNet
@@ -34,94 +33,93 @@ def kspace_to_image(kspace: np.ndarray) -> np.ndarray:
     """Reconstruct image from k-space using inverse 2D FFT."""
     return np.abs(fftshift(ifft2(ifftshift(kspace))))
 
-def evaluate_reconstruction(ground_truth: np.ndarray, reconstruction: np.ndarray) -> Dict[str, float]:
+
+def evaluate_reconstruction(
+    ground_truth: np.ndarray, reconstruction: np.ndarray
+) -> Dict[str, float]:
     """Evaluate reconstruction quality metrics."""
     # Use consistent normalization based on ground truth range
     gt_min, gt_max = ground_truth.min(), ground_truth.max()
     gt_norm = (ground_truth - gt_min) / (gt_max - gt_min)
     rec_norm = np.clip((reconstruction - gt_min) / (gt_max - gt_min), 0, 1)
-    
+
     psnr_val = psnr(gt_norm, rec_norm, data_range=1.0)
     ssim_val = ssim(gt_norm, rec_norm, data_range=1.0)
     rmse_val = np.sqrt(np.mean((gt_norm - rec_norm) ** 2))
-    
-    return {
-        "PSNR": psnr_val,
-        "SSIM": ssim_val,
-        "RMSE": rmse_val
-    }
+
+    return {"PSNR": psnr_val, "SSIM": ssim_val, "RMSE": rmse_val}
 
 
 class TVDenoising:
     """Simple TV denoising for removing artifacts from zero-filled reconstruction."""
-    
+
     def __init__(self, lambda_tv: float = 0.01, max_iter: int = 70):
-        """
-        Initialize TV denoising.
-        
+        """Initialize TV denoising.
+
         Args:
             lambda_tv: Regularization parameter for TV penalty
             max_iter: Maximum number of iterations
         """
         self.lambda_tv = lambda_tv
         self.max_iter = max_iter
-        
+
     def _compute_gradient(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Compute image gradients using finite differences."""
         # Gradient in x direction (with circular boundary)
         dx = np.roll(x, -1, axis=1) - x
-        # Gradient in y direction (with circular boundary)  
+        # Gradient in y direction (with circular boundary)
         dy = np.roll(x, -1, axis=0) - x
         return dx, dy
-    
+
     def _compute_divergence(self, px: np.ndarray, py: np.ndarray) -> np.ndarray:
         """Compute divergence (adjoint of gradient operator)."""
         # Divergence is negative adjoint of gradient
         div_x = px - np.roll(px, 1, axis=1)
         div_y = py - np.roll(py, 1, axis=0)
         return div_x + div_y
-    
-    def _project_to_unit_ball(self, px: np.ndarray, py: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+
+    def _project_to_unit_ball(
+        self, px: np.ndarray, py: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Project onto the L2 ball (dual constraint for TV)."""
         norm = np.sqrt(px**2 + py**2)
         norm = np.maximum(norm, 1.0)
         return px / norm, py / norm
-    
+
     def denoise(self, noisy_image: np.ndarray) -> np.ndarray:
-        """
-        Apply TV denoising to remove artifacts.
-        
+        """Apply TV denoising to remove artifacts.
+
         Solves: argmin_u { 0.5 * ||u - noisy_image||^2 + lambda_tv * TV(u) }
-        
+
         Args:
             noisy_image: Input image with artifacts (e.g., zero-filled reconstruction)
-            
+
         Returns:
             Denoised image
         """
         # Initialize dual variables
         px = np.zeros_like(noisy_image)
         py = np.zeros_like(noisy_image)
-        
+
         tau = 0.25  # Step size for dual problem
-        
+
         for _ in range(self.max_iter):
             # Compute divergence
             div_p = self._compute_divergence(px, py)
-            
+
             # Update primal variable: u = x - λ·div(p)
             u = noisy_image + self.lambda_tv * div_p
-            
+
             # Compute gradient of u
             dx, dy = self._compute_gradient(u)
-            
+
             # Update dual variables
             px_new = px + tau * dx
             py_new = py + tau * dy
-            
+
             # Project onto unit ball
             px, py = self._project_to_unit_ball(px_new, py_new)
-        
+
         # Final primal variable
         div_p = self._compute_divergence(px, py)
         return noisy_image + self.lambda_tv * div_p
@@ -135,7 +133,6 @@ def compare_methods(
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
 ):
     """Compare U-Net and TV denoising reconstruction methods."""
-
     # Load model
     print("Loading model...")
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
@@ -307,76 +304,71 @@ def compare_methods(
 def hyperparameter_search(
     dataset_path: str,
     num_samples: int = 5,
-    lambda_values: np.ndarray = np.logspace(-2, 0, 10)
+    lambda_values: np.ndarray = np.logspace(-2, 0, 10),
 ):
     """Search for optimal TV denoising parameter."""
-    
     print("=== TV Denoising Hyperparameter Search ===")
-    
+
     with h5py.File(dataset_path, "r") as f:
         test_data = f["test"]
-        
-        results = {
-            'lambda': [],
-            'avg_psnr': [],
-            'avg_ssim': []
-        }
-        
+
+        results = {"lambda": [], "avg_psnr": [], "avg_ssim": []}
+
         for lambda_tv in lambda_values:
             print(f"\nTesting λ = {lambda_tv}")
             tv_denoiser = TVDenoising(lambda_tv=lambda_tv, max_iter=70)
-            
+
             psnr_values = []
             ssim_values = []
-            
+
             for idx in range(min(num_samples, test_data["phantoms"].shape[0])):
                 kspace_full = test_data["kspace_full"][idx]
                 kspace_undersampled = test_data["kspace_undersampled"][idx]
-                
+
                 gt_image = kspace_to_image(kspace_full)
                 zerofilled_image = kspace_to_image(kspace_undersampled)
-                
+
                 # Apply TV denoising to zero-filled reconstruction
                 tv_image = tv_denoiser.denoise(zerofilled_image)
-                
+
                 metrics = evaluate_reconstruction(gt_image, tv_image)
                 psnr_values.append(metrics["PSNR"])
                 ssim_values.append(metrics["SSIM"])
-            
+
             avg_psnr = np.mean(psnr_values)
             avg_ssim = np.mean(ssim_values)
-            
-            results['lambda'].append(lambda_tv)
-            results['avg_psnr'].append(avg_psnr)
-            results['avg_ssim'].append(avg_ssim)
-            
+
+            results["lambda"].append(lambda_tv)
+            results["avg_psnr"].append(avg_psnr)
+            results["avg_ssim"].append(avg_ssim)
+
             print(f"  Average PSNR: {avg_psnr:.2f}")
             print(f"  Average SSIM: {avg_ssim:.3f}")
-    
+
     # Plot results
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-    
-    ax1.semilogx(results['lambda'], results['avg_psnr'], 'o-')
-    ax1.set_xlabel('λ (TV regularization)')
-    ax1.set_ylabel('Average PSNR (dB)')
-    ax1.set_title('PSNR vs TV Regularization')
+
+    ax1.semilogx(results["lambda"], results["avg_psnr"], "o-")
+    ax1.set_xlabel("λ (TV regularization)")
+    ax1.set_ylabel("Average PSNR (dB)")
+    ax1.set_title("PSNR vs TV Regularization")
     ax1.grid(True, alpha=0.3)
-    
-    ax2.semilogx(results['lambda'], results['avg_ssim'], 'o-')
-    ax2.set_xlabel('λ (TV regularization)')
-    ax2.set_ylabel('Average SSIM')
-    ax2.set_title('SSIM vs TV Regularization')
+
+    ax2.semilogx(results["lambda"], results["avg_ssim"], "o-")
+    ax2.set_xlabel("λ (TV regularization)")
+    ax2.set_ylabel("Average SSIM")
+    ax2.set_title("SSIM vs TV Regularization")
     ax2.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
-    plt.savefig('tv_denoise_hyperparameter_search.png', dpi=150)
+    plt.savefig("tv_denoise_hyperparameter_search.png", dpi=150)
     plt.show()
-    
+
     # Find optimal lambda
-    optimal_idx = np.argmax(results['avg_psnr'])
-    optimal_lambda = results['lambda'][optimal_idx]
+    optimal_idx = np.argmax(results["avg_psnr"])
+    optimal_lambda = results["lambda"][optimal_idx]
     print(f"\nOptimal λ = {optimal_lambda} (based on PSNR)")
-    
+
     return optimal_lambda
 
 
@@ -386,13 +378,13 @@ if __name__ == "__main__":
         dataset_path="./mri_dataset.h5",
         num_samples=5,
     )
-    
+
     # Run comparison with optimal lambda
     results = compare_methods(
         dataset_path="./mri_dataset.h5",
         model_path="./adaptive-unet.pth",
         num_samples=20,
-        lambda_tv=optimal_lambda
+        lambda_tv=optimal_lambda,
     )
 
     # Additional analysis
@@ -403,8 +395,10 @@ if __name__ == "__main__":
 
     print(f"U-Net improvement: {unet_psnr - zero_filled_psnr:.2f} dB")
     print(f"TV-Denoise improvement: {tv_psnr - zero_filled_psnr:.2f} dB")
-    
+
     # Compare computational aspects
     print("\n=== Method Characteristics ===")
     print("U-Net: Fast inference, requires training data, may hallucinate")
-    print("TV-Denoise: Simple post-processing, removes streaking artifacts, preserves edges")
+    print(
+        "TV-Denoise: Simple post-processing, removes streaking artifacts, preserves edges"
+    )
