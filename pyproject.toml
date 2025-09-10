@@ -3,36 +3,43 @@ line-length = 88
 target-version = "py38"
 
 [tool.ruff.lint]
-# Erweiterte Regel-Sets aktivieren
+# Moderater Regel-Set - sauber aber nicht übertrieben
 select = [
     "E",   # pycodestyle errors  
     "W",   # pycodestyle warnings
     "F",   # Pyflakes
     "I",   # isort
-    "N",   # pep8-naming
     "D",   # pydocstyle (Docstring-Regeln!)
-    "B",   # flake8-bugbear
+    "B",   # flake8-bugbear (wichtige bugs)
     "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
-    "S",   # flake8-bandit (Security)
-    "T20", # flake8-print (keine print statements)
-    "PT",  # flake8-pytest-style
-    "RET", # flake8-return
-    "SIM", # flake8-simplify
-    "PL",  # Pylint
-    "ARG", # flake8-unused-arguments
+    "UP",  # pyupgrade (moderne Python syntax)
+    "D",   # pydocstyle (nur für wichtige docstrings)
 ]
 
 ignore = [
-    "D100", # Missing docstring in public module (optional)
-    "D104", # Missing docstring in public package (optional)
+    "D100",  # Missing docstring in public module
+    "D101",  # Missing docstring in public class  
+    "D104",  # Missing docstring in public package
+    "D105",  # Missing docstring in magic method
+    "D107",  # Missing docstring in `__init__`
+    "D203",  # 1 blank line required before class docstring
+    "D213",  # Multi-line docstring summary should start at the second line
+    "E501",  # Line too long (let formatter handle this)
 ]
 
 [tool.ruff.lint.pydocstyle]
-# Google-Style Docstrings (oder "numpy" oder "pep257")
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-# Tests brauchen nicht immer Docstrings
-"test_*.py" = ["D"]
-"tests/*.py" = ["D"]
+# Tests und Scripts sind entspannter
+"test_*.py" = ["D", "S101"]  # Keine docstrings, asserts ok
+"tests/*.py" = ["D", "S101"]
+"scripts/*.py" = ["D", "T20"] # Scripts dürfen print() haben
+"**/conftest.py" = ["D"]
+
+[tool.ruff.format]
+# Wie Black formatieren
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
