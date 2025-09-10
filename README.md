@@ -20,29 +20,31 @@ This repository implements and compares MRI reconstruction techniques from class
 │   ├── tv_vs_unet/
 │   │   ├── Plots/
 │   │   ├── compare_methods.py
+│   │   ├── compare_cascased_with_tv.py
 │   │   ├── data_generation.py
 │   │   ├── train_unet.py
+│   │   ├── train_cascaded_refinement.py
 │   │   └── README.md
 │   └── __init__.py
 ```
 
 ## Project Components
 
-### 📁 **Deep Learning MRI Reconstruction** (`tv_vs_unet/`)
+### 🚀 **Cascaded Deep Learning MRI Reconstruction** (`tv_vs_unet/`)
 
-Advanced deep learning approach implementing an adaptive U-Net architecture specifically designed for MRI reconstruction with comprehensive method comparison.
+Advanced two-stage deep learning approach that combines k-space and image-space reconstruction for superior MRI recovery from undersampled data.
 
-**Key Features:**
-- **Synthetic Data Generation**: Creates realistic MRI phantom data with controlled undersampling patterns
-- **Adaptive U-Net Architecture**: Acceleration-aware design with larger kernels (7×7) for wider spatial relationship capture
-- **Built-in Data Consistency**: Enforces consistency between predicted and measured k-space data
-- **Comprehensive Comparison**: Evaluates U-Net against Total Variance Minimization and zero-filled reconstruction methods
+**Key Innovation:**
+- **Cascaded Architecture**: K-space U-Net followed by image-space refinement CNN
+- **Surprising Discovery**: TV denoising can compete with U-Net on SSIM metrics due to smoothness bias
+- **Data-Consistent K-space Stage**: Adaptive U-Net with built-in measured value replacement
+- **Residual Image Refinement**: CNN that removes artifacts while preserving structural details
 - **Advanced Training Framework**: PyTorch Lightning with mixed precision, experiment tracking via Weights & Biases
 
 **Results Highlights:**
-- Achieves 1+ dB PSNR improvement over classical methods
-- SSIM improvements from 0.635 to 0.733 indicating better structural preservation
-- Superior artifact removal and noise reduction across diverse phantom geometries
+- Cascaded model achieves highest PSNR/SSIM and lowest RMSE across all methods
+- Superior and more stable performance compared to individual approaches
+- Effective combination of frequency domain data consistency with spatial domain priors
 
 **📖 [Detailed Documentation](src/tv_vs_unet/README.md)**
 
@@ -71,14 +73,11 @@ Comprehensive exploration of traditional MRI reconstruction techniques and funda
 
 1. **🏁 Start Here**: Begin with [first_reconstruction](src/ImageReconstruction/first_reconstruction/) for fundamental MRI reconstruction concepts
 2. **📚 Classical Foundations**: Explore [different_interpolation_methods](src/ImageReconstruction/different_interpolation_methods/) for comprehensive classical approaches
-3. **🚀 Modern Techniques**: Dive into [tv_vs_unet](src/tv_vs_unet/) for state-of-the-art deep learning reconstruction
+3. **🚀 Modern Techniques**: Dive into [tv_vs_unet](src/tv_vs_unet/) for state-of-the-art cascaded deep learning reconstruction
 
 Each component contains detailed documentation with implementation specifics, usage instructions, and comprehensive result interpretations.
 
 ## Future Research Directions
 
-### 🔬 **Dual-Domain Learning**
-Implement a U-Net that learns to reconstruct additionally in image space with real images as targets. This approach would leverage complementary constraints in both k-space and image domains for potentially superior reconstruction quality.
-
-### 🎯 **Reinforcement Learning for Adaptive Sampling**
-Develop an RL framework where an agent learns optimal k-space sampling strategies to maximize reconstruction quality (PSNR). This could lead to intelligent, content-aware undersampling patterns that adapt to specific anatomy or pathology.
+### 🤖 **K-space Agent**
+Develop an agent that can adaptively determine optimal k-space sampling patterns and reconstruction strategies for different imaging scenarios. This agent would learn to balance acquisition speed with reconstruction quality based on the specific imaging context.

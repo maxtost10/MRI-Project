@@ -91,7 +91,6 @@ All metrics use consistent ground-truth-based normalization to avoid the common 
 ├── train_cascaded_refinement.py     # Stage-2 image refinement + Lightning training
 ├── compare_methods.py               # Zero-filled vs U-Net vs TV baseline study
 ├── compare_cascased_with_tv.py      # Cascaded vs K-space U-Net vs TV
-├── utils.py                         # Shared helpers (complex↔tensor, FFTs, metrics, TV)
 └── Plots/                           # Figures used in this README
 ```
 
