@@ -1,6 +1,6 @@
 # Cascaded Deep Learning for MRI Reconstruction
 
-**The Story**: I built a two-stage reconstruction pipeline to recover synthetic phantom images from undersampled MRI data. After comparing a k-space U-Net against Total Variation denoising, I discovered something interesting—TV denoising could actually compete with the U-Net on SSIM metrics. This led me to develop a **cascaded approach**: first reconstruct in k-space, then refine in image space. The results speak for themselves.
+**Content**: Two-stage reconstruction pipeline to recover synthetic phantom images from undersampled MRI data. After comparing a k-space U-Net against Total Variation denoising, I discovered something interesting—TV denoising could actually compete with the U-Net on SSIM metrics. This led me to develop a **cascaded approach**: first reconstruct in k-space, then refine in image space. The results speak for themselves.
 
 ---
 
@@ -19,7 +19,7 @@
 
 **The Surprise**: When benchmarking against Total Variation denoising (Rudin-Osher-Fatemi model), I found that TV could occasionally match the U-Net on SSIM scores. This happens because TV's piecewise-smooth prior can boost structural similarity metrics, even while losing fine details.
 
-**The Innovation**: If TV excels at structural smoothing and U-Net excels at data-consistent reconstruction, why not combine their strengths? I designed a cascaded model:
+**The Idea**: If TV excels at structural smoothing and U-Net excels at data-consistent reconstruction, why not combine their strengths? I designed a cascaded model:
 1. **Stage 1**: K-space U-Net (frozen after training) performs data-consistent frequency domain reconstruction
 2. **Stage 2**: Image-space CNN refines the magnitude image using residual learning
 
