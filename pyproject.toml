@@ -3,13 +3,11 @@ line-length = 88
 target-version = "py38"
 
 [tool.ruff.lint]
-# Moderater Regel-Set - sauber aber nicht übertrieben
 select = [
     "E",   # pycodestyle errors  
     "W",   # pycodestyle warnings
     "F",   # Pyflakes
     "I",   # isort
-    "D",   # pydocstyle (Docstring-Regeln!)
     "B",   # flake8-bugbear (wichtige bugs)
     "C4",  # flake8-comprehensions
     "UP",  # pyupgrade (moderne Python syntax)
@@ -31,15 +29,7 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-# Tests und Scripts sind entspannter
-"test_*.py" = ["D", "S101"]  # Keine docstrings, asserts ok
+"test_*.py" = ["D", "S101"]
 "tests/*.py" = ["D", "S101"]
-"scripts/*.py" = ["D", "T20"] # Scripts dürfen print() haben
+"scripts/*.py" = ["D", "T20"]
 "**/conftest.py" = ["D"]
-
-[tool.ruff.format]
-# Wie Black formatieren
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
